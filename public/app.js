@@ -559,13 +559,17 @@ function openExportModal() {
   }
 
   selectExportFormat(selectedExportFormat || 'pdf');
-  document.getElementById('modal-overlay')?.classList.add('open');
-  document.getElementById('export-modal')?.classList.add('open');
+  const overlay = document.getElementById('modal-overlay');
+  const modal = document.getElementById('export-modal');
+  if (overlay) { overlay.style.display = 'block'; overlay.classList.add('open'); }
+  if (modal) { modal.style.display = 'flex'; modal.classList.add('open'); }
 }
 
 function closeExportModal() {
-  document.getElementById('modal-overlay')?.classList.remove('open');
-  document.getElementById('export-modal')?.classList.remove('open');
+  const overlay = document.getElementById('modal-overlay');
+  const modal = document.getElementById('export-modal');
+  if (overlay) { overlay.style.display = 'none'; overlay.classList.remove('open'); }
+  if (modal) { modal.style.display = 'none'; modal.classList.remove('open'); }
 }
 
 function selectExportFormat(fmt) {
@@ -1441,14 +1445,18 @@ function openBlockModal(blockId) {
     ).join('');
   }
 
-  document.getElementById('modal-overlay')?.classList.add('open');
-  document.getElementById('block-modal')?.classList.add('open');
+  const overlay = document.getElementById('modal-overlay');
+  const modal = document.getElementById('block-modal');
+  if (overlay) { overlay.style.display = 'block'; overlay.classList.add('open'); }
+  if (modal) { modal.style.display = 'flex'; modal.classList.add('open'); }
   setTimeout(() => document.getElementById('bl-title')?.focus(), 80);
 }
 
 function closeBlockModal() {
-  document.getElementById('modal-overlay')?.classList.remove('open');
-  document.getElementById('block-modal')?.classList.remove('open');
+  const overlay = document.getElementById('modal-overlay');
+  const modal = document.getElementById('block-modal');
+  if (overlay) { overlay.style.display = 'none'; overlay.classList.remove('open'); }
+  if (modal) { modal.style.display = 'none'; modal.classList.remove('open'); }
   editingBlockId = null;
 }
 
@@ -1456,6 +1464,8 @@ function closeAllModals() {
   closeBlockModal();
   closeExportModal();
   closeIOSModal();
+  const overlay = document.getElementById('modal-overlay');
+  if (overlay) { overlay.style.display = 'none'; overlay.classList.remove('open'); }
 }
 
 function pickTTEmoji(e) {
@@ -1603,13 +1613,17 @@ function dismissPWABanner() {
 }
 
 function openIOSModal() {
-  document.getElementById('modal-overlay')?.classList.add('open');
-  document.getElementById('ios-install-modal')?.classList.add('open');
+  const overlay = document.getElementById('modal-overlay');
+  const modal = document.getElementById('ios-install-modal');
+  if (overlay) { overlay.style.display = 'block'; overlay.classList.add('open'); }
+  if (modal) { modal.style.display = 'flex'; modal.classList.add('open'); }
 }
 
 function closeIOSModal() {
-  document.getElementById('modal-overlay')?.classList.remove('open');
-  document.getElementById('ios-install-modal')?.classList.remove('open');
+  const overlay = document.getElementById('modal-overlay');
+  const modal = document.getElementById('ios-install-modal');
+  if (overlay) { overlay.style.display = 'none'; overlay.classList.remove('open'); }
+  if (modal) { modal.style.display = 'none'; modal.classList.remove('open'); }
 }
 
 /* ════════════════════════════════════════════════════════════
