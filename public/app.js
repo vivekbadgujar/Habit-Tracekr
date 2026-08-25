@@ -1,5 +1,5 @@
 /* ════════════════════════════════════════════════════════════
-   HABITUS — Daily Habit Ledger & Schedule Logic
+   HABITUS — Daily Habit Ledger & Schedule (Real Data)
 ═══════════════════════════════════════════════════════════ */
 
 const EMOJIS = [
@@ -29,10 +29,10 @@ const TT_SLOT  = 44;       // px per 30-min slot (Day view)
 const TT_TOTAL = (TT_END - TT_START) / 30 * TT_SLOT;
 
 let state = {
-  habits: [],
-  completions: {},      // { 'YYYY-MM-DD': [habitId, ...] }
-  ttBlocks: [],         // [{ id, title, icon, startTime, endTime, habitId, days, date }]
-  ttLog: {},            // { 'YYYY-MM-DD': { blockId: 'done' | 'skipped' } }
+  habits: [],           // Real user habits: [{ id, name, icon, createdAt }]
+  completions: {},      // Real completions: { 'YYYY-MM-DD': [habitId, ...] }
+  ttBlocks: [],         // Real timetable blocks: [{ id, title, icon, startTime, endTime, habitId, days, date }]
+  ttLog: {},            // Real timetable status log: { 'YYYY-MM-DD': { blockId: 'done' | 'skipped' } }
   gMonth: new Date().getMonth(),
   gYear: new Date().getFullYear(),
   ttDate: new Date(),
@@ -62,7 +62,7 @@ function save() {
   localStorage.setItem('hbt_completions', JSON.stringify(state.completions));
   localStorage.setItem('hbt_tt_blocks',   JSON.stringify(state.ttBlocks));
   localStorage.setItem('hbt_tt_log',      JSON.stringify(state.ttLog));
-  localStorage.setItem('hbt_initialized', 'true');
+  localStorage.setItem('hbt_real_data',   'true');
 }
 
 /* ── Date & Time Helpers ──────────────────────────────────── */
@@ -201,9 +201,11 @@ function renderToday() {
 
   if (!state.habits.length) {
     el.innerHTML = `
-      <div class="empty-list">
-        No habits yet<br>
-        <span style="font-size:9px;letter-spacing:0;color:var(--text-3)">Go to Manage ↗ to add your first habit</span>
+      <div class="empty-list" style="padding: 48px 24px; text-align: center;">
+        <div style="font-size: 24px; margin-bottom: 8px;">◈</div>
+        <div style="font-weight: 600; color: var(--text-1); font-size: 14px; margin-bottom: 4px;">No Habits Added Yet</div>
+        <div style="font-size: 11px; color: var(--text-3); margin-bottom: 16px;">Create your daily routine to start live tracking.</div>
+        <button type="button" class="btn btn-primary" onclick="nav('manage')" style="font-size: 11px; padding: 7px 14px;">+ Add Your First Habit</button>
       </div>`;
     return;
   }
@@ -262,7 +264,7 @@ function renderGrid() {
   html += '</tr></thead><tbody>';
 
   if (!state.habits.length) {
-    html += `<tr><td colspan="${d2 + 1}" class="empty-list">No habits to display</td></tr>`;
+    html += `<tr><td colspan="${d2 + 1}" class="empty-list" style="padding: 40px;">No habits to display. Add habits in the Manage tab.</td></tr>`;
   } else {
     state.habits.forEach(h => {
       html += `<tr><td class="hcol">${h.icon} ${esc(h.name)}</td>`;
@@ -494,7 +496,7 @@ function renderAnalytics() {
   const tbody = document.getElementById('an-tbody');
   if (tbody) {
     if (!stats.length) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty-list" style="border:none">No habits tracked yet</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-list" style="border:none">No habits tracked yet. Start logging to view insights.</td></tr>';
     } else {
       tbody.innerHTML = stats.map(h => `
         <tr>
@@ -512,7 +514,7 @@ function renderAnalytics() {
   const topEl = document.getElementById('top-habits');
   if (topEl) {
     if (!sorted.length) {
-      topEl.innerHTML = '<div class="empty-state">No data yet</div>';
+      topEl.innerHTML = '<div class="empty-state">No completion data yet</div>';
     } else {
       topEl.innerHTML = sorted.map((h, i) => `
         <div class="top-row">
@@ -545,7 +547,7 @@ function renderManage() {
 
   if (!state.habits.length) {
     el.className = '';
-    el.innerHTML = '<div class="empty-state">No habits yet — add one above</div>';
+    el.innerHTML = '<div class="empty-state">No habits created yet — enter a name above to add your first habit</div>';
     return;
   }
 
@@ -591,9 +593,7 @@ function removeHabit(id) {
   const h = state.habits.find(x => x.id === id);
   if (!h) return;
 
-  // Safe direct removal with UI feedback
   state.habits = state.habits.filter(x => x.id !== id);
-
   // Unlink from schedule blocks
   state.ttBlocks.forEach(b => {
     if (b.habitId === id) b.habitId = null;
@@ -615,7 +615,7 @@ function moveHabit(idx, dir) {
   renderToday();
 }
 
-/* ── Export & Import JSON Backup ─────────────────────────── */
+/* ── Export & Import JSON Backup & Reset ───────────────────── */
 function exportData() {
   const backup = {
     version: '1.0.0',
@@ -663,7 +663,23 @@ function importData(event) {
     }
   };
   reader.readAsText(file);
-  event.target.value = ''; // reset file input
+  event.target.value = '';
+}
+
+function clearAllData() {
+  if (!confirm('Are you sure you want to reset all habits and schedule blocks to a clean state?')) return;
+  state.habits = [];
+  state.completions = {};
+  state.ttBlocks = [];
+  state.ttLog = {};
+  localStorage.clear();
+  localStorage.setItem('hbt_real_data', 'true');
+  save();
+  renderToday();
+  renderManage();
+  renderGrid();
+  renderAnalytics();
+  renderTimetable();
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -792,8 +808,8 @@ function renderDayView(dateObj, dkey, isToday) {
   if (!blocks.length) {
     bHtml += `
       <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);text-align:center;pointer-events:none">
-        <div style="font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:2px;text-transform:uppercase">No blocks scheduled</div>
-        <div style="font-family:var(--mono);font-size:9px;color:var(--text-3);margin-top:6px">Click + Add Block to schedule this day</div>
+        <div style="font-family:var(--mono);font-size:10px;color:var(--text-3);letter-spacing:2px;text-transform:uppercase">No blocks scheduled for this day</div>
+        <div style="font-family:var(--mono);font-size:9px;color:var(--text-3);margin-top:6px">Click "+ Add Block" above to schedule tasks & habits</div>
       </div>`;
   }
 
@@ -1095,44 +1111,6 @@ function init() {
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape') closeBlockModal();
   });
-
-  const isInitialized = localStorage.getItem('hbt_initialized');
-
-  // Seed demo habits ONLY if brand new first visit
-  if (!isInitialized && !state.habits.length) {
-    const demos = [
-      { id: 'h_d1', name: 'Morning run',    icon: '🏃' },
-      { id: 'h_d2', name: 'Read 30 min',    icon: '📚' },
-      { id: 'h_d3', name: 'Drink 2L water', icon: '💧' },
-      { id: 'h_d4', name: 'Meditate',       icon: '🧘' },
-      { id: 'h_d5', name: 'No junk food',   icon: '🍎' }
-    ];
-    state.habits = demos.map(d => ({ ...d, createdAt: new Date().toISOString() }));
-
-    // Seed realistic 2-week history
-    const now = new Date();
-    demos.forEach((d, hi) => {
-      for (let back = 1; back <= 14; back++) {
-        const dt = new Date(now);
-        dt.setDate(dt.getDate() - back);
-        if ((back + hi) % (hi + 2) !== 0) {
-          const k = dk(dt.getFullYear(), dt.getMonth(), dt.getDate());
-          if (!state.completions[k]) state.completions[k] = [];
-          state.completions[k].push(d.id);
-        }
-      }
-    });
-
-    state.ttBlocks = [
-      { id: 'tb_d1', title: 'Morning Run', icon: '🏃', startTime: '06:00', endTime: '06:45', habitId: 'h_d1', days: [1,2,3,4,5] },
-      { id: 'tb_d2', title: 'Meditation',  icon: '🧘', startTime: '07:00', endTime: '07:30', habitId: 'h_d4', days: [0,1,2,3,4,5,6] },
-      { id: 'tb_d3', title: 'Deep Work',   icon: '💻', startTime: '09:00', endTime: '12:00', habitId: null,   days: [1,2,3,4,5] },
-      { id: 'tb_d4', title: 'Reading',     icon: '📚', startTime: '20:00', endTime: '20:30', habitId: 'h_d2', days: [0,1,2,3,4,5,6] },
-      { id: 'tb_d5', title: 'Wind-down',   icon: '🌙', startTime: '22:00', endTime: '22:30', habitId: null,   days: [0,1,2,3,4,5,6] }
-    ];
-
-    save();
-  }
 
   renderToday();
 }

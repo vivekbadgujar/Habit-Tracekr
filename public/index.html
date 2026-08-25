@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
@@ -213,12 +213,13 @@
           <h1 class="page-title" id="manage-title">Manage Habits</h1>
           <div class="page-sub">Add · Remove · Reorder · Backup</div>
         </div>
-        <div style="display:flex;gap:8px;align-items:center">
-          <button class="btn btn-ghost" onclick="exportData()" title="Backup data as JSON">&#8681; Export</button>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <button type="button" class="btn btn-ghost" onclick="exportData()" title="Backup data as JSON">&#8681; Export</button>
           <label class="btn btn-ghost" style="cursor:pointer" title="Restore data from JSON">
             &#8679; Import
             <input type="file" id="import-file" accept=".json" style="display:none" onchange="importData(event)" />
           </label>
+          <button type="button" class="btn btn-ghost" onclick="clearAllData()" style="color:var(--danger);border-color:rgba(239,68,68,0.3)" title="Clear all habits and start fresh">↺ Reset</button>
         </div>
       </div>
       <div class="add-form">
