@@ -550,26 +550,66 @@ function renderAnalytics() {
    MONTHLY REPORT EXPORT (EXCEL & PDF & AI INSIGHTS)
 ═══════════════════════════════════════════════════════════ */
 function openExportModal() {
-  const mSel = document.getElementById('exp-month');
-  const ySel = document.getElementById('exp-year');
-  if (mSel && ySel) {
-    mSel.innerHTML = MONTHS.map((m, i) => `<option value="${i}" ${i === state.gMonth ? 'selected' : ''}>${m}</option>`).join('');
-    const curY = new Date().getFullYear();
-    ySel.innerHTML = [curY - 1, curY, curY + 1].map(y => `<option value="${y}" ${y === state.gYear ? 'selected' : ''}>${y}</option>`).join('');
-  }
+  const root = document.getElementById('modal-root');
+  if (!root) return;
 
-  selectExportFormat(selectedExportFormat || 'pdf');
-  const overlay = document.getElementById('modal-overlay');
-  const modal = document.getElementById('export-modal');
-  if (overlay) { overlay.style.display = 'block'; overlay.classList.add('open'); }
-  if (modal) { modal.style.display = 'flex'; modal.classList.add('open'); }
+  const curY = new Date().getFullYear();
+  const monthOptions = MONTHS.map((m, i) => `<option value="${i}" ${i === state.gMonth ? 'selected' : ''}>${m}</option>`).join('');
+  const yearOptions = [curY - 1, curY, curY + 1].map(y => `<option value="${y}" ${y === state.gYear ? 'selected' : ''}>${y}</option>`).join('');
+
+  root.innerHTML = `
+    <div class="modal-overlay" onclick="closeModal()"></div>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="export-modal-title">
+      <div class="modal-card" style="max-width:440px">
+        <div class="modal-hd">
+          <div class="modal-title" id="export-modal-title">Download Monthly Report</div>
+          <button type="button" class="modal-close" onclick="closeModal()" aria-label="Close modal">&#10005;</button>
+        </div>
+        <div class="modal-body" style="padding-top:4px">
+          <div class="form-col" style="margin-bottom:14px">
+            <label class="form-lbl">Select Month & Year</label>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <select class="f-input" id="exp-month">${monthOptions}</select>
+              <select class="f-input" id="exp-year">${yearOptions}</select>
+            </div>
+          </div>
+
+          <div class="form-col" style="margin-bottom:16px">
+            <label class="form-lbl">Choose Export Format</label>
+            <div class="export-format-grid">
+              <div class="export-format-card ${selectedExportFormat === 'pdf' ? 'sel' : ''}" id="fmt-pdf-card" onclick="selectExportFormat('pdf')" role="button" tabindex="0">
+                <div class="fmt-icon">&#128196;</div>
+                <div class="fmt-name">PDF Document</div>
+                <div class="fmt-desc">Styled ledger with AI insights & charts</div>
+              </div>
+              <div class="export-format-card ${selectedExportFormat === 'xlsx' ? 'sel' : ''}" id="fmt-xlsx-card" onclick="selectExportFormat('xlsx')" role="button" tabindex="0">
+                <div class="fmt-icon">&#128202;</div>
+                <div class="fmt-name">Excel (.xlsx)</div>
+                <div class="fmt-desc">Dual sheets: Summary & 31-day Grid</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="export-features-box" style="margin-bottom:18px">
+            <div class="ef-item">&#10003; Full 31-Day Ledger Grid</div>
+            <div class="ef-item">&#10003; Per-Habit Completion %</div>
+            <div class="ef-item">&#10003; AI Consistency Insights</div>
+            <div class="ef-item">&#10003; Longest Streaks & Metrics</div>
+          </div>
+
+          <div style="display:flex;gap:8px;justify-content:flex-end">
+            <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+            <button type="button" class="btn btn-primary" id="exp-submit-btn" onclick="executeExportReport()">
+              &#8681; Generate & Download
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>`;
 }
 
 function closeExportModal() {
-  const overlay = document.getElementById('modal-overlay');
-  const modal = document.getElementById('export-modal');
-  if (overlay) { overlay.style.display = 'none'; overlay.classList.remove('open'); }
-  if (modal) { modal.style.display = 'none'; modal.classList.remove('open'); }
+  closeModal();
 }
 
 function selectExportFormat(fmt) {
@@ -1403,61 +1443,70 @@ function openBlockModal(blockId) {
   editingBlockId = blockId;
   const isEdit = !!blockId;
   const b = isEdit ? state.ttBlocks.find(x => x.id === blockId) : null;
+  const root = document.getElementById('modal-root');
+  if (!root) return;
 
-  const modalTitle = document.getElementById('modal-title');
-  if (modalTitle) modalTitle.textContent = isEdit ? 'Edit Schedule Block' : 'Add Schedule Block';
-
-  const delBtn = document.getElementById('bl-delete-btn');
-  if (delBtn) delBtn.style.display = isEdit ? '' : 'none';
-
-  const titleInp = document.getElementById('bl-title');
-  if (titleInp) titleInp.value = b ? b.title : '';
-
-  const startSel = document.getElementById('bl-start');
-  const endSel   = document.getElementById('bl-end');
-  if (startSel && endSel) {
-    startSel.innerHTML = TT_TIMES.map(t => `<option value="${t}">${minToDisplay(timeToMin(t))}</option>`).join('');
-    endSel.innerHTML   = TT_TIMES.map(t => `<option value="${t}">${minToDisplay(timeToMin(t))}</option>`).join('');
-    startSel.value = b ? b.startTime : '07:00';
-    endSel.value   = b ? b.endTime   : '08:00';
-  }
-
+  const startVal = b ? b.startTime : '07:00';
+  const endVal   = b ? b.endTime   : '08:00';
   ttSelectedEmoji = b ? b.icon : '📅';
-  const emojiContainer = document.getElementById('bl-emoji-grid');
-  if (emojiContainer) {
-    emojiContainer.innerHTML = EMOJIS.map(e =>
-      `<button type="button" class="e-btn ${e === ttSelectedEmoji ? 'sel' : ''}" onclick="pickTTEmoji('${e}')">${e}</button>`
-    ).join('');
-  }
-
-  const hsel = document.getElementById('bl-habit');
-  if (hsel) {
-    hsel.innerHTML = '<option value="">-- None --</option>' +
-      state.habits.map(h => `<option value="${h.id}" ${b && b.habitId === h.id ? 'selected' : ''}>${h.icon} ${esc(h.name)}</option>`).join('');
-  }
-
-  const dayNames = ['Su','Mo','Tu','We','Th','Fr','Sa'];
   const selDays = b ? (b.days || []) : [1,2,3,4,5];
-  const dayPicker = document.getElementById('bl-day-picker');
-  if (dayPicker) {
-    dayPicker.innerHTML = dayNames.map((d, i) =>
-      `<button type="button" class="day-pick-btn ${selDays.includes(i) ? 'sel' : ''}" data-day="${i}" onclick="toggleDayPick(this)">${d}</button>`
-    ).join('');
-  }
+  const dayNames = ['Su','Mo','Tu','We','Th','Fr','Sa'];
 
-  const overlay = document.getElementById('modal-overlay');
-  const modal = document.getElementById('block-modal');
-  if (overlay) { overlay.style.display = 'block'; overlay.classList.add('open'); }
-  if (modal) { modal.style.display = 'flex'; modal.classList.add('open'); }
-  setTimeout(() => document.getElementById('bl-title')?.focus(), 80);
+  const startOpts = TT_TIMES.map(t => `<option value="${t}" ${t === startVal ? 'selected' : ''}>${minToDisplay(timeToMin(t))}</option>`).join('');
+  const endOpts   = TT_TIMES.map(t => `<option value="${t}" ${t === endVal ? 'selected' : ''}>${minToDisplay(timeToMin(t))}</option>`).join('');
+  const habitOpts = '<option value="">-- None --</option>' +
+    state.habits.map(h => `<option value="${h.id}" ${b && b.habitId === h.id ? 'selected' : ''}>${h.icon} ${esc(h.name)}</option>`).join('');
+  const emojiBtns = EMOJIS.map(e => `<button type="button" class="e-btn ${e === ttSelectedEmoji ? 'sel' : ''}" onclick="pickTTEmoji('${e}')">${e}</button>`).join('');
+  const dayBtns = dayNames.map((d, i) => `<button type="button" class="day-pick-btn ${selDays.includes(i) ? 'sel' : ''}" data-day="${i}" onclick="toggleDayPick(this)">${d}</button>`).join('');
+
+  root.innerHTML = `
+    <div class="modal-overlay" onclick="closeModal()"></div>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-card">
+        <div class="modal-hd">
+          <div class="modal-title" id="modal-title">${isEdit ? 'Edit Schedule Block' : 'Add Schedule Block'}</div>
+          <button type="button" class="modal-close" onclick="closeModal()" aria-label="Close modal">&#10005;</button>
+        </div>
+        <div class="form-col" style="margin-bottom:14px">
+          <label class="form-lbl" for="bl-title">Activity Title</label>
+          <input class="f-input" id="bl-title" value="${b ? esc(b.title) : ''}" placeholder="e.g. Deep Work, Gym, Reading" maxlength="50" autocomplete="off" />
+        </div>
+        <div class="form-col" style="margin-bottom:14px">
+          <label class="form-lbl">Icon</label>
+          <div class="emoji-grid" id="bl-emoji-grid" style="grid-template-columns:repeat(8,1fr);max-height:100px;overflow-y:auto">${emojiBtns}</div>
+        </div>
+        <div class="modal-time-row">
+          <div class="form-col">
+            <label class="form-lbl" for="bl-start">Start Time</label>
+            <select class="f-input" id="bl-start">${startOpts}</select>
+          </div>
+          <div class="form-col">
+            <label class="form-lbl" for="bl-end">End Time</label>
+            <select class="f-input" id="bl-end">${endOpts}</select>
+          </div>
+        </div>
+        <div class="form-col" style="margin-bottom:14px">
+          <label class="form-lbl" for="bl-habit">Link to Habit (optional)</label>
+          <select class="f-input" id="bl-habit" style="width:100%">${habitOpts}</select>
+        </div>
+        <div class="form-col" style="margin-bottom:18px">
+          <label class="form-lbl">Repeat on days</label>
+          <div class="day-picker" id="bl-day-picker">${dayBtns}</div>
+          <div style="margin-top:6px;font-family:var(--mono);font-size:9px;color:var(--text-3)">Leave all unselected = one-time block for current day</div>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          ${isEdit ? '<button type="button" class="btn btn-ghost" id="bl-delete-btn" onclick="deleteBlock()" style="color:var(--danger);border-color:rgba(229,57,53,.4)">Delete</button>' : ''}
+          <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+          <button type="button" class="btn btn-primary" onclick="saveBlock()">Save Block</button>
+        </div>
+      </div>
+    </div>`;
+
+  setTimeout(() => document.getElementById('bl-title')?.focus(), 60);
 }
 
 function closeBlockModal() {
-  const overlay = document.getElementById('modal-overlay');
-  const modal = document.getElementById('block-modal');
-  if (overlay) { overlay.style.display = 'none'; overlay.classList.remove('open'); }
-  if (modal) { modal.style.display = 'none'; modal.classList.remove('open'); }
-  editingBlockId = null;
+  closeModal();
 }
 
 function closeAllModals() {
