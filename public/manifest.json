@@ -1,0 +1,24 @@
+{
+  "name": "HABITUS — Daily Habit Ledger & Schedule",
+  "short_name": "HABITUS",
+  "description": "Minimalist monochrome habit tracker, daily timetable schedule, and analytics ledger.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#080808",
+  "theme_color": "#080808",
+  "icons": [
+    {
+      "src": "icons/icon.svg",
+      "sizes": "192x192 512x512",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": [
+    "productivity",
+    "utilities",
+    "lifestyle"
+  ]
+}

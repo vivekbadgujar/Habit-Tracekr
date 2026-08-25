@@ -8,19 +8,34 @@
   <meta name="theme-color" content="#080808" />
   <meta name="color-scheme" content="dark" />
 
+  <!-- PWA & Mobile Meta -->
+  <link rel="manifest" href="manifest.json" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="HABITUS" />
+  <link rel="apple-touch-icon" href="icons/icon.svg" />
+
   <!-- Open Graph / Social Meta -->
   <meta property="og:type" content="website" />
   <meta property="og:title" content="HABITUS — Daily Habit Ledger" />
   <meta property="og:description" content="Monochrome habit tracker and daily schedule with live metrics." />
   
   <!-- Inline SVG Favicon -->
-  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%23111111'/%3E%3Crect x='4' y='4' width='24' height='24' rx='4' fill='%23080808' stroke='%232a2a2a' stroke-width='1.5'/%3E%3Ccircle cx='16' cy='16' r='5' fill='%232dd4bf'/%3E%3C/svg%3E" />
+  <link rel="icon" type="image/svg+xml" href="icons/icon.svg" />
 
-  <!-- Fonts & Chart.js -->
+  <!-- Fonts & Libraries -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  
+  <!-- Chart.js for Visuals -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+
+  <!-- SheetJS & jsPDF for Client-Side Excel and PDF Generation -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -35,20 +50,20 @@
     </div>
     <nav class="nav">
       <div class="nav-lbl">Views</div>
-      <button class="nav-item active" data-view="today" onclick="nav('today')">
+      <button type="button" class="nav-item active" data-view="today" onclick="nav('today')">
         <span class="nav-icon" aria-hidden="true">&#9672;</span> Today
       </button>
-      <button class="nav-item" data-view="grid" onclick="nav('grid')">
+      <button type="button" class="nav-item" data-view="grid" onclick="nav('grid')">
         <span class="nav-icon" aria-hidden="true">&#8862;</span> Monthly Grid
       </button>
-      <button class="nav-item" data-view="analytics" onclick="nav('analytics')">
+      <button type="button" class="nav-item" data-view="analytics" onclick="nav('analytics')">
         <span class="nav-icon" aria-hidden="true">&#9676;</span> Analytics
       </button>
-      <button class="nav-item" data-view="timetable" onclick="nav('timetable')">
+      <button type="button" class="nav-item" data-view="timetable" onclick="nav('timetable')">
         <span class="nav-icon" aria-hidden="true">&#9776;</span> Timetable
       </button>
       <div class="nav-lbl" style="margin-top:8px">Settings</div>
-      <button class="nav-item" data-view="manage" onclick="nav('manage')">
+      <button type="button" class="nav-item" data-view="manage" onclick="nav('manage')">
         <span class="nav-icon" aria-hidden="true">&#8853;</span> Manage Habits
       </button>
     </nav>
@@ -59,54 +74,53 @@
     </div>
   </aside>
 
-  <!-- ══════════ MAIN VIEW CONTAINER ══════════ -->
-  <main class="main" id="main-content">
+  <!-- ══════════ MAIN CONTENT AREA ══════════ -->
+  <main class="main">
 
-    <!-- ─── TODAY ─── -->
+    <!-- ─── TODAY VIEW ─── -->
     <section class="view active" id="view-today" aria-labelledby="today-title">
       <div class="page-hd">
         <div>
           <h1 class="page-title" id="today-title">Today</h1>
-          <div class="page-sub" id="today-sub">Loading date...</div>
+          <div class="page-sub" id="today-sub">Daily Checklist</div>
         </div>
-        <div class="page-meta" id="today-meta">0/0 DONE<br>0% COMPLETE</div>
+        <div class="page-meta" id="today-meta"></div>
       </div>
       <div class="today-layout">
-        <div class="ring-card">
-          <svg class="ring-svg" width="128" height="128" viewBox="0 0 128 128" aria-hidden="true">
-            <circle class="ring-track" cx="64" cy="64" r="54"/>
-            <circle class="ring-arc" id="ring-arc" cx="64" cy="64" r="54" stroke-dasharray="339.29" stroke-dashoffset="339.29"/>
-          </svg>
-          <div>
-            <div style="text-align:center">
+        <div class="habit-list" id="today-list" role="list"></div>
+        <div class="ring-card" aria-label="Today completion summary">
+          <div class="ring-svg-wrap">
+            <svg class="ring-svg" width="130" height="130" viewBox="0 0 130 130">
+              <circle class="ring-bg" cx="65" cy="65" r="54" />
+              <circle class="ring-arc" id="ring-arc" cx="65" cy="65" r="54" />
+            </svg>
+            <div class="ring-center">
               <div class="ring-pct" id="ring-pct">0%</div>
-              <div class="ring-pct-sub">Complete</div>
+              <div class="ring-lbl">TODAY</div>
             </div>
-            <div class="ring-count" id="ring-count" style="margin-top:8px;text-align:center">0 / 0 habits</div>
-            <div class="ring-date" id="ring-date" style="margin-top:6px"></div>
           </div>
-        </div>
-        <div>
-          <div class="sec-lbl">Habits — Tap to check</div>
-          <div class="habit-list" id="today-list"></div>
+          <div class="ring-info">
+            <div class="ring-count" id="ring-count">0 / 0 habits</div>
+            <div class="ring-date" id="ring-date"></div>
+          </div>
         </div>
       </div>
     </section>
 
-    <!-- ─── MONTHLY GRID ─── -->
+    <!-- ─── MONTHLY GRID (LEDGER) ─── -->
     <section class="view" id="view-grid" aria-labelledby="grid-title">
       <div class="page-hd">
         <div>
-          <h1 class="page-title" id="grid-title">Monthly Grid</h1>
-          <div class="page-sub">Ledger View</div>
+          <h1 class="page-title" id="grid-title">Monthly Ledger</h1>
+          <div class="page-sub">Habit Matrix</div>
         </div>
-        <div class="month-nav">
-          <button class="mnav-btn" onclick="shiftMonth(-1)" aria-label="Previous Month">&#8249;</button>
-          <div class="mnav-lbl" id="grid-lbl">Month Year</div>
-          <button class="mnav-btn" onclick="shiftMonth(1)" aria-label="Next Month">&#8250;</button>
+        <div class="m-nav" aria-label="Month Navigation">
+          <button type="button" class="btn btn-ghost" onclick="shiftMonth(-1)" aria-label="Previous Month">&#9664; Prev</button>
+          <span class="m-lbl" id="grid-lbl"></span>
+          <button type="button" class="btn btn-ghost" onclick="shiftMonth(1)" aria-label="Next Month">Next &#9654;</button>
         </div>
       </div>
-      <div class="grid-scroll">
+      <div class="grid-wrap">
         <table class="g-table" id="g-table"></table>
       </div>
       <div class="trend-card">
@@ -122,9 +136,14 @@
       <div class="page-hd">
         <div>
           <h1 class="page-title" id="analytics-title">Analytics</h1>
-          <div class="page-sub">Month-to-Date Insights</div>
+          <div class="page-sub">Performance & Month-to-Date Insights</div>
         </div>
-        <div class="page-meta" id="an-period"></div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <button type="button" class="btn btn-ghost" onclick="openExportModal()" style="display:flex;align-items:center;gap:6px;border-color:var(--accent-border);color:var(--text-1)" id="export-report-btn">
+            <span style="color:var(--accent)">&#128196;</span> Download Monthly Report
+          </button>
+          <div class="page-meta" id="an-period"></div>
+        </div>
       </div>
       <div class="analytics-top">
         <div class="donut-card">
@@ -176,27 +195,22 @@
         </div>
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <div class="tt-toggle-group" role="tablist">
-            <button class="tt-toggle active" id="tt-day-btn" onclick="setTTView('day')" role="tab" aria-selected="true">Day</button>
-            <button class="tt-toggle" id="tt-week-btn" onclick="setTTView('week')" role="tab" aria-selected="false">Week</button>
+            <button type="button" class="tt-toggle active" id="tt-day-btn" onclick="setTTView('day')" role="tab" aria-selected="true">Day</button>
+            <button type="button" class="tt-toggle" id="tt-week-btn" onclick="setTTView('week')" role="tab" aria-selected="false">Week</button>
           </div>
-          <button class="btn btn-primary" onclick="openBlockModal(null)">+ Add Block</button>
+          <div class="m-nav" id="tt-day-nav" aria-label="Day Navigation">
+            <button type="button" class="btn btn-ghost" onclick="shiftTTDay(-1)" aria-label="Previous Day">&#9664;</button>
+            <span class="m-lbl" id="tt-nav-label" onclick="jumpTTToday()" style="cursor:pointer" title="Jump to Today"></span>
+            <button type="button" class="btn btn-ghost" onclick="shiftTTDay(1)" aria-label="Next Day">&#9654;</button>
+          </div>
+          <button type="button" class="btn btn-primary" onclick="openBlockModal(null)">+ Add Block</button>
         </div>
       </div>
-      <div class="tt-day-nav" id="tt-day-nav">
-        <button class="mnav-btn" onclick="shiftTTDay(-1)" aria-label="Previous Day">&#8249;</button>
-        <div class="mnav-lbl" id="tt-nav-label">Date</div>
-        <button class="mnav-btn" onclick="shiftTTDay(1)" aria-label="Next Day">&#8250;</button>
-        <button class="tt-today-btn" onclick="jumpTTToday()">Today</button>
-      </div>
       <div id="tt-day-view">
-        <div class="schedule-wrap">
+        <div class="sched-container" id="sched-container">
           <div class="sched-time-col" id="sched-time-col"></div>
-          <div class="sched-main">
-            <div class="sched-grid-lines" id="sched-grid-lines"></div>
-            <div class="sched-blocks" id="sched-blocks">
-              <div class="time-now-line" id="time-now-line" style="display:none"></div>
-            </div>
-          </div>
+          <div class="sched-grid-lines" id="sched-grid-lines"></div>
+          <div class="sched-blocks" id="sched-blocks"></div>
         </div>
       </div>
       <div id="tt-week-view" style="display:none">
@@ -234,7 +248,7 @@
             <div class="emoji-grid" id="emoji-grid"></div>
           </div>
           <div class="form-col" style="justify-content:flex-end">
-            <button class="btn btn-primary" onclick="addHabit()">+ Add Habit</button>
+            <button type="button" class="btn btn-primary" onclick="addHabit()">+ Add Habit</button>
           </div>
         </div>
       </div>
@@ -242,31 +256,33 @@
       <div id="manage-list"></div>
     </section>
 
-    <!-- ─── BLOCK MODAL ─── -->
-    <div class="modal-overlay" id="modal-overlay" onclick="closeBlockModal()"></div>
-    <div class="block-modal" id="block-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-      <div class="modal-hd">
-        <div class="modal-title" id="modal-title">Add Schedule Block</div>
-        <button class="modal-x" onclick="closeBlockModal()" aria-label="Close modal">&#10005;</button>
-      </div>
-      <div class="modal-bd">
-        <div class="form-col" style="margin-bottom:14px">
-          <label class="form-lbl" for="bl-title">Title</label>
-          <input class="f-input" id="bl-title" placeholder="e.g. Deep work session" maxlength="50" style="width:100%" autocomplete="off" />
+    <!-- ══════════ MODAL OVERLAY ══════════ -->
+    <div class="modal-overlay" id="modal-overlay" onclick="closeAllModals()"></div>
+
+    <!-- ══════════ TIMETABLE BLOCK MODAL ══════════ -->
+    <div class="modal" id="block-modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <div class="modal-card">
+        <div class="modal-hd">
+          <div class="modal-title" id="modal-title">Add Schedule Block</div>
+          <button type="button" class="modal-close" onclick="closeBlockModal()" aria-label="Close modal">&#10005;</button>
         </div>
-        <div style="display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap">
-          <div class="form-col" style="flex:1;min-width:110px">
-            <label class="form-lbl" for="bl-start">Start</label>
-            <select class="f-input" id="bl-start" style="width:100%"></select>
-          </div>
-          <div class="form-col" style="flex:1;min-width:110px">
-            <label class="form-lbl" for="bl-end">End</label>
-            <select class="f-input" id="bl-end" style="width:100%"></select>
-          </div>
+        <div class="form-col" style="margin-bottom:14px">
+          <label class="form-lbl" for="bl-title">Activity Title</label>
+          <input class="f-input" id="bl-title" placeholder="e.g. Deep Work, Gym, Reading" maxlength="50" autocomplete="off" />
         </div>
         <div class="form-col" style="margin-bottom:14px">
           <label class="form-lbl">Icon</label>
-          <div class="emoji-grid" id="bl-emoji-grid" style="max-width:300px"></div>
+          <div class="emoji-grid" id="bl-emoji-grid" style="grid-template-columns:repeat(8,1fr);max-height:100px;overflow-y:auto"></div>
+        </div>
+        <div class="modal-time-row">
+          <div class="form-col">
+            <label class="form-lbl" for="bl-start">Start Time</label>
+            <select class="f-input" id="bl-start"></select>
+          </div>
+          <div class="form-col">
+            <label class="form-lbl" for="bl-end">End Time</label>
+            <select class="f-input" id="bl-end"></select>
+          </div>
         </div>
         <div class="form-col" style="margin-bottom:14px">
           <label class="form-lbl" for="bl-habit">Link to Habit (optional)</label>
@@ -280,30 +296,116 @@
           <div style="margin-top:6px;font-family:var(--mono);font-size:9px;color:var(--text-3)">Leave all unselected = one-time block for current day</div>
         </div>
         <div style="display:flex;gap:8px;justify-content:flex-end">
-          <button class="btn btn-ghost" id="bl-delete-btn" onclick="deleteBlock()" style="display:none;color:var(--danger);border-color:rgba(229,57,53,.4)">Delete</button>
-          <button class="btn btn-ghost" onclick="closeBlockModal()">Cancel</button>
-          <button class="btn btn-primary" onclick="saveBlock()">Save Block</button>
+          <button type="button" class="btn btn-ghost" id="bl-delete-btn" onclick="deleteBlock()" style="display:none;color:var(--danger);border-color:rgba(229,57,53,.4)">Delete</button>
+          <button type="button" class="btn btn-ghost" onclick="closeBlockModal()">Cancel</button>
+          <button type="button" class="btn btn-primary" onclick="saveBlock()">Save Block</button>
         </div>
       </div>
     </div>
+
+    <!-- ══════════ MONTHLY REPORT EXPORT MODAL ══════════ -->
+    <div class="modal" id="export-modal" role="dialog" aria-modal="true" aria-labelledby="export-modal-title">
+      <div class="modal-card" style="max-width:440px">
+        <div class="modal-hd">
+          <div class="modal-title" id="export-modal-title">Download Monthly Report</div>
+          <button type="button" class="modal-close" onclick="closeExportModal()" aria-label="Close modal">&#10005;</button>
+        </div>
+        <div class="modal-body" style="padding-top:4px">
+          <div class="form-col" style="margin-bottom:14px">
+            <label class="form-lbl">Select Month & Year</label>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+              <select class="f-input" id="exp-month"></select>
+              <select class="f-input" id="exp-year"></select>
+            </div>
+          </div>
+
+          <div class="form-col" style="margin-bottom:16px">
+            <label class="form-lbl">Choose Export Format</label>
+            <div class="export-format-grid">
+              <div class="export-format-card sel" id="fmt-pdf-card" onclick="selectExportFormat('pdf')" role="button" tabindex="0">
+                <div class="fmt-icon">&#128196;</div>
+                <div class="fmt-name">PDF Document</div>
+                <div class="fmt-desc">Styled ledger with AI insights & charts</div>
+              </div>
+              <div class="export-format-card" id="fmt-xlsx-card" onclick="selectExportFormat('xlsx')" role="button" tabindex="0">
+                <div class="fmt-icon">&#128202;</div>
+                <div class="fmt-name">Excel (.xlsx)</div>
+                <div class="fmt-desc">Dual sheets: Summary & 31-day Grid</div>
+              </div>
+            </div>
+          </div>
+
+          <div class="export-features-box" style="margin-bottom:18px">
+            <div class="ef-item">&#10003; Full 31-Day Ledger Grid</div>
+            <div class="ef-item">&#10003; Per-Habit Completion %</div>
+            <div class="ef-item">&#10003; AI Consistency Insights</div>
+            <div class="ef-item">&#10003; Longest Streaks & Metrics</div>
+          </div>
+
+          <div style="display:flex;gap:8px;justify-content:flex-end">
+            <button type="button" class="btn btn-ghost" onclick="closeExportModal()">Cancel</button>
+            <button type="button" class="btn btn-primary" id="exp-submit-btn" onclick="executeExportReport()">
+              &#8681; Generate & Download
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════ IOS SAFARI INSTALL MODAL ══════════ -->
+    <div class="modal" id="ios-install-modal" role="dialog" aria-modal="true" aria-labelledby="ios-title">
+      <div class="modal-card" style="max-width:360px">
+        <div class="modal-hd">
+          <div class="modal-title" id="ios-title">Install on iOS</div>
+          <button type="button" class="modal-close" onclick="closeIOSModal()" aria-label="Close modal">&#10005;</button>
+        </div>
+        <div class="modal-body" style="font-size:12px;line-height:1.6;color:var(--text-2);padding:10px 0 6px">
+          <div style="margin-bottom:12px;color:var(--text-1)">To install <strong>HABITUS</strong> as a standalone app on your iPhone / iPad:</div>
+          <ol style="padding-left:18px;margin-bottom:16px;display:flex;flex-direction:column;gap:8px">
+            <li>Tap the <strong>Share</strong> button <span style="font-size:14px;color:var(--accent)">&#x2399;</span> in Safari's bottom toolbar.</li>
+            <li>Scroll down and tap <strong>Add to Home Screen</strong> <span style="font-size:14px;color:var(--accent)">&#8862;</span>.</li>
+            <li>Tap <strong>Add</strong> in the top-right corner.</li>
+          </ol>
+          <button type="button" class="btn btn-primary" style="width:100%" onclick="closeIOSModal()">Got It</button>
+        </div>
+      </div>
+    </div>
+
   </main>
+</div>
+
+<!-- ══════════ MOBILE PWA INSTALL FLOATING BANNER ══════════ -->
+<div class="pwa-banner" id="pwa-install-banner" style="display:none">
+  <div class="pwa-banner-inner">
+    <div class="pwa-banner-icon">
+      <img src="icons/icon.svg" alt="HABITUS icon" width="26" height="26" />
+    </div>
+    <div class="pwa-banner-text">
+      <div class="pwa-banner-title">Install HABITUS App</div>
+      <div class="pwa-banner-sub">Add to home screen for full-screen mode</div>
+    </div>
+    <button type="button" class="btn btn-primary pwa-install-btn" id="pwa-install-btn" onclick="handlePWAInstallClick()">
+      Install
+    </button>
+    <button type="button" class="pwa-dismiss-btn" onclick="dismissPWABanner()" aria-label="Dismiss banner">&#10005;</button>
+  </div>
 </div>
 
 <!-- ══════════ MOBILE BOTTOM NAVIGATION ══════════ -->
 <nav class="mob-nav" aria-label="Mobile Navigation">
-  <button class="mob-nav-item active" data-view="today" onclick="nav('today')">
+  <button type="button" class="mob-nav-item active" data-view="today" onclick="nav('today')">
     <span class="mob-icon" aria-hidden="true">&#9672;</span>Today
   </button>
-  <button class="mob-nav-item" data-view="grid" onclick="nav('grid')">
+  <button type="button" class="mob-nav-item" data-view="grid" onclick="nav('grid')">
     <span class="mob-icon" aria-hidden="true">&#8862;</span>Grid
   </button>
-  <button class="mob-nav-item" data-view="analytics" onclick="nav('analytics')">
+  <button type="button" class="mob-nav-item" data-view="analytics" onclick="nav('analytics')">
     <span class="mob-icon" aria-hidden="true">&#9676;</span>Stats
   </button>
-  <button class="mob-nav-item" data-view="timetable" onclick="nav('timetable')">
+  <button type="button" class="mob-nav-item" data-view="timetable" onclick="nav('timetable')">
     <span class="mob-icon" aria-hidden="true">&#9776;</span>Schedule
   </button>
-  <button class="mob-nav-item" data-view="manage" onclick="nav('manage')">
+  <button type="button" class="mob-nav-item" data-view="manage" onclick="nav('manage')">
     <span class="mob-icon" aria-hidden="true">&#8853;</span>Manage
   </button>
 </nav>

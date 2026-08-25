@@ -1,5 +1,6 @@
 /* ════════════════════════════════════════════════════════════
-   HABITUS — Daily Habit Ledger & Schedule (Real Data Only)
+   HABITUS — Daily Habit Ledger & Schedule
+   Pure Real Data • PWA Support • Client-Side Excel & PDF Reports
 ═══════════════════════════════════════════════════════════ */
 
 const EMOJIS = [
@@ -44,6 +45,8 @@ let selectedEmoji = EMOJIS[0];
 let ttSelectedEmoji = '📅';
 let editingBlockId = null;
 let nowLineInterval = null;
+let deferredPwaPrompt = null;
+let selectedExportFormat = 'pdf';
 
 /* ── Persistence (Real Data Only) ────────────────────────── */
 function load() {
@@ -53,25 +56,19 @@ function load() {
     state.ttBlocks    = JSON.parse(localStorage.getItem('hbt_tt_blocks')   || '[]');
     state.ttLog       = JSON.parse(localStorage.getItem('hbt_tt_log')      || '{}');
 
-    // Automatically purge any legacy dummy test IDs (e.g. h_d1, tb_d1) from older sessions
+    // Automatically purge legacy dummy test IDs if any exist
     const dummyIds = ['h_d1', 'h_d2', 'h_d3', 'h_d4', 'h_d5'];
-    const hasDummyHabit = state.habits.some(h => dummyIds.includes(h.id));
-    if (hasDummyHabit) {
+    if (state.habits.some(h => dummyIds.includes(h.id))) {
       state.habits = state.habits.filter(h => !dummyIds.includes(h.id));
-      // Clean dummy IDs from completions
       Object.keys(state.completions).forEach(k => {
         state.completions[k] = state.completions[k].filter(id => !dummyIds.includes(id));
-        if (state.completions[k].length === 0) delete state.completions[k];
+        if (!state.completions[k].length) delete state.completions[k];
       });
-      // Clean dummy timetable blocks
       state.ttBlocks = state.ttBlocks.filter(b => !b.id.startsWith('tb_d'));
       save();
     }
   } catch(e) {
-    state.habits = [];
-    state.completions = {};
-    state.ttBlocks = [];
-    state.ttLog = {};
+    state.habits = []; state.completions = {}; state.ttBlocks = []; state.ttLog = {};
   }
 }
 
@@ -134,25 +131,19 @@ function esc(s) {
     .replace(/"/g, '&quot;');
 }
 
-/* ── Real Habit Check & Streak Logic ──────────────────────── */
+/* ── Habit Check & Streak Logic ───────────────────────────── */
 function isChecked(hId, key) {
   return !!(state.completions[key] && state.completions[key].includes(hId));
 }
 
 function toggle(hId, key) {
-  if (!state.completions[key]) {
-    state.completions[key] = [];
-  }
+  if (!state.completions[key]) state.completions[key] = [];
   const i = state.completions[key].indexOf(hId);
   if (i === -1) {
-    // Real Click: Mark habit as done for this date
     state.completions[key].push(hId);
   } else {
-    // Real Click: Uncheck habit for this date
     state.completions[key].splice(i, 1);
-    if (state.completions[key].length === 0) {
-      delete state.completions[key];
-    }
+    if (state.completions[key].length === 0) delete state.completions[key];
   }
   save();
 }
@@ -161,9 +152,7 @@ function streak(hId) {
   const today = new Date();
   let d = new Date(today);
   let s = 0;
-  if (!isChecked(hId, todayDk())) {
-    d.setDate(d.getDate() - 1);
-  }
+  if (!isChecked(hId, todayDk())) d.setDate(d.getDate() - 1);
   for (let i = 0; i < 365; i++) {
     const k = dk(d.getFullYear(), d.getMonth(), d.getDate());
     if (isChecked(hId, k)) {
@@ -558,6 +547,432 @@ function renderAnalytics() {
 }
 
 /* ════════════════════════════════════════════════════════════
+   MONTHLY REPORT EXPORT (EXCEL & PDF & AI INSIGHTS)
+═══════════════════════════════════════════════════════════ */
+function openExportModal() {
+  const mSel = document.getElementById('exp-month');
+  const ySel = document.getElementById('exp-year');
+  if (mSel && ySel) {
+    mSel.innerHTML = MONTHS.map((m, i) => `<option value="${i}" ${i === state.gMonth ? 'selected' : ''}>${m}</option>`).join('');
+    const curY = new Date().getFullYear();
+    ySel.innerHTML = [curY - 1, curY, curY + 1].map(y => `<option value="${y}" ${y === state.gYear ? 'selected' : ''}>${y}</option>`).join('');
+  }
+
+  selectExportFormat(selectedExportFormat || 'pdf');
+  document.getElementById('modal-overlay')?.classList.add('open');
+  document.getElementById('export-modal')?.classList.add('open');
+}
+
+function closeExportModal() {
+  document.getElementById('modal-overlay')?.classList.remove('open');
+  document.getElementById('export-modal')?.classList.remove('open');
+}
+
+function selectExportFormat(fmt) {
+  selectedExportFormat = fmt;
+  document.getElementById('fmt-pdf-card')?.classList.toggle('sel', fmt === 'pdf');
+  document.getElementById('fmt-xlsx-card')?.classList.toggle('sel', fmt === 'xlsx');
+}
+
+function generateAIInsights(y, m) {
+  const d2 = dimOf(y, m);
+  const now = new Date();
+  const isCurMonth = (now.getFullYear() === y && now.getMonth() === m);
+  const activeDays = isCurMonth ? now.getDate() : d2;
+
+  if (!state.habits.length) {
+    return {
+      summaryText: 'No habits were active during this period. Add habits in the Manage tab to begin tracking consistency trends.',
+      topHabit: null,
+      strugglingHabit: null,
+      ovPct: 0,
+      totalCompletions: 0,
+      bestStreak: 0,
+      stats: []
+    };
+  }
+
+  const stats = state.habits.map(h => {
+    let actual = 0;
+    for (let d = 1; d <= activeDays; d++) {
+      if (isChecked(h.id, dk(y, m, d))) actual++;
+    }
+    const pct = activeDays > 0 ? Math.round((actual / activeDays) * 100) : 0;
+    return {
+      id: h.id,
+      name: h.name,
+      icon: h.icon,
+      goal: d2,
+      actual: actual,
+      left: Math.max(0, d2 - actual),
+      pct: pct,
+      streak: streak(h.id)
+    };
+  });
+
+  const totalPossible = state.habits.length * activeDays;
+  const totalCompletions = stats.reduce((sum, h) => sum + h.actual, 0);
+  const ovPct = totalPossible > 0 ? Math.round((totalCompletions / totalPossible) * 100) : 0;
+  const bestStreak = Math.max(...stats.map(h => h.streak), 0);
+
+  const sorted = stats.slice().sort((a, b) => b.pct - a.pct);
+  const topHabit = sorted[0];
+  const strugglingHabit = sorted[sorted.length - 1];
+
+  let commentary = `In ${MONTHS[m]} ${y}, you logged ${totalCompletions} habit checkmark${totalCompletions === 1 ? '' : 's'} across ${state.habits.length} tracked habit${state.habits.length === 1 ? '' : 's'}, reaching a ${ovPct}% overall consistency rate. `;
+
+  if (topHabit && topHabit.pct >= 50) {
+    commentary += `You were most consistent with "${topHabit.name}" (${topHabit.pct}% completion). `;
+  } else if (topHabit) {
+    commentary += `Your leading habit was "${topHabit.name}" at ${topHabit.pct}% completion. `;
+  }
+
+  if (strugglingHabit && strugglingHabit.id !== topHabit?.id && strugglingHabit.pct < 60) {
+    commentary += `Consistency was lower for "${strugglingHabit.name}" (${strugglingHabit.pct}%). `;
+    commentary += `Suggestion: Consider habit-stacking "${strugglingHabit.name}" immediately after "${topHabit.name}" or anchoring it to a dedicated morning block in your Timetable to boost adherence.`;
+  } else if (ovPct >= 80) {
+    commentary += `Outstanding momentum! Your discipline is in the top tier. Keep maintaining your routine triggers.`;
+  } else {
+    commentary += `Tip: Review your daily timetable to ensure each habit has a dedicated, realistic time-block scheduled.`;
+  }
+
+  return {
+    summaryText: commentary,
+    topHabit,
+    strugglingHabit,
+    ovPct,
+    totalCompletions,
+    bestStreak,
+    stats
+  };
+}
+
+function executeExportReport() {
+  const m = parseInt(document.getElementById('exp-month')?.value || state.gMonth, 10);
+  const y = parseInt(document.getElementById('exp-year')?.value || state.gYear, 10);
+
+  const btn = document.getElementById('exp-submit-btn');
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = 'Generating...';
+  }
+
+  setTimeout(() => {
+    try {
+      if (selectedExportFormat === 'xlsx') {
+        generateExcelReport(y, m);
+      } else {
+        generatePdfReport(y, m);
+      }
+      closeExportModal();
+    } catch(err) {
+      alert('Error generating report: ' + err.message);
+      console.error(err);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '&#8681; Generate & Download';
+      }
+    }
+  }, 100);
+}
+
+/* ── Client-Side Excel Report Generation ──────────────────── */
+function generateExcelReport(y, m) {
+  if (typeof XLSX === 'undefined') {
+    alert('SheetJS Excel library is not loaded. Please check your internet connection.');
+    return;
+  }
+
+  const d2 = dimOf(y, m);
+  const insights = generateAIInsights(y, m);
+  const wb = XLSX.utils.book_new();
+
+  // SHEET 1: Monthly Summary & AI Insights
+  const summaryData = [
+    ['HABITUS — MONTHLY PERFORMANCE LEDGER'],
+    ['Month:', `${MONTHS[m]} ${y}`],
+    ['Exported On:', new Date().toLocaleString()],
+    ['Overall Completion Rate:', `${insights.ovPct}%`],
+    ['Total Checks Logged:', insights.totalCompletions],
+    ['Longest Active Streak:', `${insights.bestStreak} days`],
+    [],
+    ['AI BEHAVIORAL INSIGHTS & SUGGESTIONS:'],
+    [insights.summaryText],
+    [],
+    ['PER-HABIT PERFORMANCE BREAKDOWN'],
+    ['Icon', 'Habit Name', 'Monthly Goal (Days)', 'Actual Completed', 'Remaining Days', 'Completion Rate (%)', 'Current Streak (Days)']
+  ];
+
+  insights.stats.forEach(h => {
+    summaryData.push([
+      h.icon,
+      h.name,
+      h.goal,
+      h.actual,
+      h.left,
+      `${h.pct}%`,
+      `${h.streak}d`
+    ]);
+  });
+
+  const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
+  wsSummary['!cols'] = [{ wch: 8 }, { wch: 28 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 20 }, { wch: 20 }];
+  XLSX.utils.book_append_sheet(wb, wsSummary, 'Monthly Summary');
+
+  // SHEET 2: Daily Ledger Grid (1..31)
+  const gridHeaders = ['Icon', 'Habit'];
+  for (let d = 1; d <= d2; d++) gridHeaders.push(String(d));
+  gridHeaders.push('Total Done', 'Completion %');
+
+  const gridData = [
+    [`DAILY LEDGER MATRIX — ${MONTHS[m].toUpperCase()} ${y}`],
+    [],
+    gridHeaders
+  ];
+
+  state.habits.forEach(h => {
+    let doneCount = 0;
+    const row = [h.icon, h.name];
+    for (let d = 1; d <= d2; d++) {
+      const checked = isChecked(h.id, dk(y, m, d));
+      if (checked) doneCount++;
+      row.push(checked ? '✓' : '·');
+    }
+    const pct = d2 > 0 ? Math.round((doneCount / d2) * 100) : 0;
+    row.push(doneCount, `${pct}%`);
+    gridData.push(row);
+  });
+
+  const wsGrid = XLSX.utils.aoa_to_sheet(gridData);
+  const colWidths = [{ wch: 6 }, { wch: 24 }];
+  for (let d = 1; d <= d2; d++) colWidths.push({ wch: 4 });
+  colWidths.push({ wch: 12 }, { wch: 14 });
+  wsGrid['!cols'] = colWidths;
+
+  XLSX.utils.book_append_sheet(wb, wsGrid, 'Daily Grid');
+
+  // Download File
+  const filename = `Ledger-Report-${MONTHS[m]}-${y}.xlsx`;
+  XLSX.writeFile(wb, filename);
+}
+
+/* ── Client-Side PDF Report Generation ────────────────────── */
+function generatePdfReport(y, m) {
+  if (!window.jspdf || !window.jspdf.jsPDF) {
+    alert('PDF export engine is loading. Please try again in a moment.');
+    return;
+  }
+
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'mm',
+    format: 'a4'
+  });
+
+  const d2 = dimOf(y, m);
+  const insights = generateAIInsights(y, m);
+  const pageWidth = doc.internal.pageSize.getWidth();
+  let curY = 16;
+
+  // Background Theme
+  doc.setFillColor(8, 8, 8);
+  doc.rect(0, 0, pageWidth, 297, 'F');
+
+  // Header Banner
+  doc.setDrawColor(38, 38, 38);
+  doc.setFillColor(17, 17, 17);
+  doc.roundedRect(12, curY, pageWidth - 24, 26, 2, 2, 'FD');
+
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(16);
+  doc.setTextColor(242, 242, 242);
+  doc.text('HABITUS', 18, curY + 11);
+
+  doc.setFontSize(9);
+  doc.setTextColor(45, 212, 191); // Teal accent
+  doc.text('DAILY HABIT LEDGER & PERFORMANCE REPORT', 18, curY + 19);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(11);
+  doc.setTextColor(242, 242, 242);
+  doc.text(`${MONTHS[m]} ${y}`, pageWidth - 18, curY + 11, { align: 'right' });
+
+  doc.setFontSize(8);
+  doc.setTextColor(138, 138, 138);
+  doc.text(`Generated: ${new Date().toLocaleDateString()}`, pageWidth - 18, curY + 19, { align: 'right' });
+
+  curY += 32;
+
+  // KPI Summary Cards
+  const cardW = (pageWidth - 24 - 12) / 3;
+  const kpis = [
+    { label: 'OVERALL COMPLETION', val: `${insights.ovPct}%`, color: [45, 212, 191] },
+    { label: 'TOTAL CHECKS LOGGED', val: `${insights.totalCompletions}`, color: [242, 242, 242] },
+    { label: 'BEST ACTIVE STREAK', val: `${insights.bestStreak} Days`, color: [242, 242, 242] }
+  ];
+
+  kpis.forEach((kpi, idx) => {
+    const x = 12 + idx * (cardW + 6);
+    doc.setFillColor(24, 24, 24);
+    doc.setDrawColor(38, 38, 38);
+    doc.roundedRect(x, curY, cardW, 18, 1.5, 1.5, 'FD');
+
+    doc.setFontSize(14);
+    doc.setFont('helvetica', 'bold');
+    doc.setTextColor(kpi.color[0], kpi.color[1], kpi.color[2]);
+    doc.text(kpi.val, x + cardW / 2, curY + 9, { align: 'center' });
+
+    doc.setFontSize(7);
+    doc.setFont('helvetica', 'normal');
+    doc.setTextColor(138, 138, 138);
+    doc.text(kpi.label, x + cardW / 2, curY + 14.5, { align: 'center' });
+  });
+
+  curY += 23;
+
+  // AI Insights Callout Box
+  doc.setFillColor(20, 20, 20);
+  doc.setDrawColor(45, 212, 191);
+  doc.roundedRect(12, curY, pageWidth - 24, 24, 1.5, 1.5, 'FD');
+
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(45, 212, 191);
+  doc.text('AI CONSISTENCY INSIGHTS & COACHING', 18, curY + 6.5);
+
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(200, 200, 200);
+  const splitText = doc.splitTextToSize(insights.summaryText, pageWidth - 36);
+  doc.text(splitText, 18, curY + 12);
+
+  curY += 29;
+
+  // Per-Habit Breakdown Table (AutoTable)
+  const breakdownRows = insights.stats.map(h => [
+    `${h.icon}  ${h.name}`,
+    String(h.goal),
+    String(h.actual),
+    String(h.left),
+    `${h.pct}%`,
+    `${h.streak}d`
+  ]);
+
+  if (doc.autoTable) {
+    doc.autoTable({
+      startY: curY,
+      margin: { left: 12, right: 12 },
+      head: [['Habit Name', 'Goal', 'Actual', 'Left', 'Completion %', 'Streak']],
+      body: breakdownRows.length ? breakdownRows : [['No habits tracked', '-', '-', '-', '-', '-']],
+      theme: 'plain',
+      styles: {
+        fontSize: 8,
+        textColor: [240, 240, 240],
+        fillColor: [17, 17, 17],
+        lineColor: [38, 38, 38],
+        lineWidth: 0.2,
+        cellPadding: 2.2
+      },
+      headStyles: {
+        fillColor: [24, 24, 24],
+        textColor: [45, 212, 191],
+        fontStyle: 'bold',
+        fontSize: 7.5
+      },
+      columnStyles: {
+        0: { cellWidth: 70 },
+        1: { halign: 'center' },
+        2: { halign: 'center', textColor: [45, 212, 191] },
+        3: { halign: 'center' },
+        4: { halign: 'center', fontStyle: 'bold' },
+        5: { halign: 'center' }
+      }
+    });
+
+    curY = doc.lastAutoTable.finalY + 8;
+  }
+
+  // Monthly Matrix Header
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(242, 242, 242);
+  doc.text(`Daily Ledger Grid — ${MONTHS[m]} 1 to ${d2}`, 12, curY);
+  curY += 4;
+
+  // Daily Grid Table (Compact)
+  const gridHead = ['Habit'];
+  for (let d = 1; d <= Math.min(d2, 31); d++) gridHead.push(String(d));
+  gridHead.push('Total');
+
+  const gridRows = state.habits.map(h => {
+    let tot = 0;
+    const r = [`${h.icon} ${h.name}`];
+    for (let d = 1; d <= Math.min(d2, 31); d++) {
+      const c = isChecked(h.id, dk(y, m, d));
+      if (c) tot++;
+      r.push(c ? 'v' : '-');
+    }
+    r.push(String(tot));
+    return r;
+  });
+
+  if (doc.autoTable) {
+    doc.autoTable({
+      startY: curY,
+      margin: { left: 12, right: 12 },
+      head: [gridHead],
+      body: gridRows.length ? gridRows : [['No habits', ...Array(d2).fill('-'), '0']],
+      theme: 'plain',
+      styles: {
+        fontSize: 5.5,
+        textColor: [200, 200, 200],
+        fillColor: [17, 17, 17],
+        lineColor: [30, 30, 30],
+        lineWidth: 0.15,
+        cellPadding: 1,
+        halign: 'center'
+      },
+      headStyles: {
+        fillColor: [24, 24, 24],
+        textColor: [45, 212, 191],
+        fontStyle: 'bold',
+        fontSize: 5.5
+      },
+      columnStyles: {
+        0: { cellWidth: 32, halign: 'left', fontStyle: 'bold' }
+      }
+    });
+
+    curY = doc.lastAutoTable.finalY + 6;
+  }
+
+  // Embedded Chart Snapshot (if Donut Canvas exists)
+  const donutCanvas = document.getElementById('donut-chart');
+  if (donutCanvas && curY < 250) {
+    try {
+      const imgData = donutCanvas.toDataURL('image/png');
+      doc.addImage(imgData, 'PNG', pageWidth - 45, curY, 32, 32);
+      doc.setFontSize(7);
+      doc.setTextColor(138, 138, 138);
+      doc.text('Monthly Chart Snapshot', pageWidth - 45, curY + 36);
+    } catch(e) {
+      console.warn('Canvas export skipped:', e);
+    }
+  }
+
+  // Footer Note
+  doc.setFontSize(7);
+  doc.setTextColor(76, 76, 76);
+  doc.text('HABITUS — Professional Monochrome Habit Tracker & Ledger • Self-Hosted & Local Storage', pageWidth / 2, 290, { align: 'center' });
+
+  // Download PDF
+  const filename = `Ledger-Report-${MONTHS[m]}-${y}.pdf`;
+  doc.save(filename);
+}
+
+/* ════════════════════════════════════════════════════════════
    MANAGE HABITS VIEW & DATA BACKUP
 ═══════════════════════════════════════════════════════════ */
 function renderManage() {
@@ -623,7 +1038,6 @@ function removeHabit(id) {
   if (!h) return;
 
   state.habits = state.habits.filter(x => x.id !== id);
-  // Unlink from schedule blocks
   state.ttBlocks.forEach(b => {
     if (b.habitId === id) b.habitId = null;
   });
@@ -870,18 +1284,14 @@ function cycleBlockStatus(blockId, dkey) {
   const next = cur === 'pending' ? 'done' : cur === 'done' ? 'skipped' : 'pending';
   setTTBlockStatus(blockId, dkey, next);
   renderTimetable();
-  if (document.getElementById('view-today')?.classList.contains('active')) {
-    renderToday();
-  }
+  if (document.getElementById('view-today')?.classList.contains('active')) renderToday();
 }
 
 function markTTBlock(blockId, dkey, status) {
   const cur = ttBlockStatus(blockId, dkey);
   setTTBlockStatus(blockId, dkey, cur === status ? 'pending' : status);
   renderTimetable();
-  if (document.getElementById('view-today')?.classList.contains('active')) {
-    renderToday();
-  }
+  if (document.getElementById('view-today')?.classList.contains('active')) renderToday();
 }
 
 /* ── Week View ────────────────────────────────────────────── */
@@ -1023,7 +1433,7 @@ function openBlockModal(blockId) {
   }
 
   const dayNames = ['Su','Mo','Tu','We','Th','Fr','Sa'];
-  const selDays = b ? (b.days || []) : [1,2,3,4,5]; // Mon-Fri default for new block
+  const selDays = b ? (b.days || []) : [1,2,3,4,5];
   const dayPicker = document.getElementById('bl-day-picker');
   if (dayPicker) {
     dayPicker.innerHTML = dayNames.map((d, i) =>
@@ -1040,6 +1450,12 @@ function closeBlockModal() {
   document.getElementById('modal-overlay')?.classList.remove('open');
   document.getElementById('block-modal')?.classList.remove('open');
   editingBlockId = null;
+}
+
+function closeAllModals() {
+  closeBlockModal();
+  closeExportModal();
+  closeIOSModal();
 }
 
 function pickTTEmoji(e) {
@@ -1120,10 +1536,97 @@ function deleteBlock() {
 }
 
 /* ════════════════════════════════════════════════════════════
+   PWA & MOBILE INSTALLATION LOGIC
+═══════════════════════════════════════════════════════════ */
+function isMobileDevice() {
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent) || (window.innerWidth <= 768);
+}
+
+function isIOS() {
+  return /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+}
+
+function isStandalone() {
+  return window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
+}
+
+function initPWA() {
+  // Register Service Worker
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(err => {
+      console.warn('SW registration failed:', err);
+    });
+  }
+
+  // If running on desktop or already installed as standalone app, don't show install banner
+  if (!isMobileDevice() || isStandalone() || sessionStorage.getItem('hbt_pwa_dismissed')) {
+    return;
+  }
+
+  // Listen for beforeinstallprompt on Android/Chrome
+  window.addEventListener('beforeinstallprompt', e => {
+    e.preventDefault();
+    deferredPwaPrompt = e;
+    const banner = document.getElementById('pwa-install-banner');
+    if (banner && !sessionStorage.getItem('hbt_pwa_dismissed')) {
+      banner.style.display = 'block';
+    }
+  });
+
+  // For iOS Safari fallback: show banner if mobile iOS and not standalone
+  if (isIOS() && !isStandalone() && !sessionStorage.getItem('hbt_pwa_dismissed')) {
+    setTimeout(() => {
+      const banner = document.getElementById('pwa-install-banner');
+      if (banner) banner.style.display = 'block';
+    }, 1500);
+  }
+
+  window.addEventListener('appinstalled', () => {
+    deferredPwaPrompt = null;
+    const banner = document.getElementById('pwa-install-banner');
+    if (banner) banner.style.display = 'none';
+  });
+}
+
+function handlePWAInstallClick() {
+  if (deferredPwaPrompt) {
+    deferredPwaPrompt.prompt();
+    deferredPwaPrompt.userChoice.then(choice => {
+      if (choice.outcome === 'accepted') {
+        const banner = document.getElementById('pwa-install-banner');
+        if (banner) banner.style.display = 'none';
+      }
+      deferredPwaPrompt = null;
+    });
+  } else if (isIOS()) {
+    openIOSModal();
+  } else {
+    alert('To install, tap your browser menu (⋮) and select "Install app" or "Add to Home screen".');
+  }
+}
+
+function dismissPWABanner() {
+  const banner = document.getElementById('pwa-install-banner');
+  if (banner) banner.style.display = 'none';
+  sessionStorage.setItem('hbt_pwa_dismissed', 'true');
+}
+
+function openIOSModal() {
+  document.getElementById('modal-overlay')?.classList.add('open');
+  document.getElementById('ios-install-modal')?.classList.add('open');
+}
+
+function closeIOSModal() {
+  document.getElementById('modal-overlay')?.classList.remove('open');
+  document.getElementById('ios-install-modal')?.classList.remove('open');
+}
+
+/* ════════════════════════════════════════════════════════════
    APP INITIALIZATION
 ═══════════════════════════════════════════════════════════ */
 function init() {
   load();
+  initPWA();
 
   // Set Sidebar Date
   const n = new Date();
@@ -1138,7 +1641,7 @@ function init() {
   });
 
   document.addEventListener('keydown', e => {
-    if (e.key === 'Escape') closeBlockModal();
+    if (e.key === 'Escape') closeAllModals();
   });
 
   renderToday();
