@@ -1,6 +1,7 @@
 /* ════════════════════════════════════════════════════════════
    HABITUS — Daily Habit Ledger & Schedule
    Pure Real Data • PWA Support • Client-Side Excel & PDF Reports
+   Time-Tracking & Live Stopwatch Upgrade
 ═══════════════════════════════════════════════════════════ */
 
 const EMOJIS = [
@@ -30,8 +31,10 @@ const TT_SLOT  = 44;       // px per 30-min slot (Day view)
 const TT_TOTAL = (TT_END - TT_START) / 30 * TT_SLOT;
 
 let state = {
-  habits: [],           // [{ id, name, icon, createdAt }]
-  completions: {},      // { 'YYYY-MM-DD': [habitId, ...] } - REAL CLICKS ONLY
+  habits: [],           // [{ id, name, icon, type: 'check'|'time', targetMinutes: number, createdAt }]
+  completions: {},      // { 'YYYY-MM-DD': [habitId, ...] } - Real check completions
+  sessions: {},         // { 'YYYY-MM-DD': { [habitId]: [ { id, start, end, duration } ] } }
+  activeTimer: null,    // { habitId, startTime: number, dateKey: string } | null
   ttBlocks: [],         // [{ id, title, icon, startTime, endTime, habitId, days, date }]
   ttLog: {},            // { 'YYYY-MM-DD': { blockId: 'done' | 'skipped' } }
   gMonth: new Date().getMonth(),
@@ -42,9 +45,14 @@ let state = {
 
 let charts = { trend: null, donut: null, bar: null };
 let selectedEmoji = EMOJIS[0];
+let editSelectedEmoji = EMOJIS[0];
 let ttSelectedEmoji = '📅';
 let editingBlockId = null;
+let editingHabitId = null;
+let newHabitType = 'check';
+let editHabitType = 'check';
 let nowLineInterval = null;
+let timerTickerInterval = null;
 let deferredPwaPrompt = null;
 let selectedExportFormat = 'pdf';
 
@@ -53,8 +61,17 @@ function load() {
   try {
     state.habits      = JSON.parse(localStorage.getItem('hbt_habits')      || '[]');
     state.completions = JSON.parse(localStorage.getItem('hbt_completions') || '{}');
+    state.sessions    = JSON.parse(localStorage.getItem('hbt_sessions')    || '{}');
+    state.activeTimer = JSON.parse(localStorage.getItem('hbt_active_timer') || 'null');
     state.ttBlocks    = JSON.parse(localStorage.getItem('hbt_tt_blocks')   || '[]');
     state.ttLog       = JSON.parse(localStorage.getItem('hbt_tt_log')      || '{}');
+
+    // Normalize habits data structure (type and targetMinutes)
+    state.habits = state.habits.map(h => ({
+      ...h,
+      type: h.type || 'check',
+      targetMinutes: parseInt(h.targetMinutes, 10) || 30
+    }));
 
     // Automatically purge legacy dummy test IDs if any exist
     const dummyIds = ['h_d1', 'h_d2', 'h_d3', 'h_d4', 'h_d5'];
@@ -67,18 +84,43 @@ function load() {
       state.ttBlocks = state.ttBlocks.filter(b => !b.id.startsWith('tb_d'));
       save();
     }
+
+    // Validate activeTimer
+    if (state.activeTimer) {
+      const exists = state.habits.some(h => h.id === state.activeTimer.habitId);
+      if (!exists) {
+        state.activeTimer = null;
+        save();
+      } else if (state.activeTimer.dateKey !== todayDk()) {
+        // If active timer was running across midnight, finalize it for previous date
+        const prevKey = state.activeTimer.dateKey;
+        const dur = Math.max(1, Math.floor((Date.now() - state.activeTimer.startTime) / 1000));
+        if (!state.sessions[prevKey]) state.sessions[prevKey] = {};
+        if (!state.sessions[prevKey][state.activeTimer.habitId]) state.sessions[prevKey][state.activeTimer.habitId] = [];
+        state.sessions[prevKey][state.activeTimer.habitId].push({
+          id: 's_' + Date.now(),
+          start: state.activeTimer.startTime,
+          end: Date.now(),
+          duration: dur
+        });
+        state.activeTimer = null;
+        save();
+      }
+    }
   } catch(e) {
-    state.habits = []; state.completions = {}; state.ttBlocks = []; state.ttLog = {};
+    state.habits = []; state.completions = {}; state.sessions = {}; state.activeTimer = null; state.ttBlocks = []; state.ttLog = {};
   }
 }
 
 function save() {
   try {
-    localStorage.setItem('hbt_habits',      JSON.stringify(state.habits));
-    localStorage.setItem('hbt_completions', JSON.stringify(state.completions));
-    localStorage.setItem('hbt_tt_blocks',   JSON.stringify(state.ttBlocks));
-    localStorage.setItem('hbt_tt_log',      JSON.stringify(state.ttLog));
-    localStorage.setItem('hbt_real_data',   'true');
+    localStorage.setItem('hbt_habits',       JSON.stringify(state.habits));
+    localStorage.setItem('hbt_completions',  JSON.stringify(state.completions));
+    localStorage.setItem('hbt_sessions',     JSON.stringify(state.sessions));
+    localStorage.setItem('hbt_active_timer', JSON.stringify(state.activeTimer));
+    localStorage.setItem('hbt_tt_blocks',    JSON.stringify(state.ttBlocks));
+    localStorage.setItem('hbt_tt_log',       JSON.stringify(state.ttLog));
+    localStorage.setItem('hbt_real_data',    'true');
   } catch(e) {
     console.error('Error saving to localStorage:', e);
   }
@@ -131,9 +173,69 @@ function esc(s) {
     .replace(/"/g, '&quot;');
 }
 
+/* ── Time & Duration Calculation Helpers ──────────────────── */
+function getHabitDailySeconds(hId, dateKey, includeLive = true) {
+  let sec = 0;
+  if (state.sessions[dateKey] && Array.isArray(state.sessions[dateKey][hId])) {
+    sec = state.sessions[dateKey][hId].reduce((sum, s) => sum + (parseInt(s.duration, 10) || 0), 0);
+  }
+  if (includeLive && state.activeTimer && state.activeTimer.habitId === hId && state.activeTimer.dateKey === dateKey) {
+    const liveSec = Math.max(0, Math.floor((Date.now() - state.activeTimer.startTime) / 1000));
+    sec += liveSec;
+  }
+  return sec;
+}
+
+function getHabitMonthlySeconds(hId, y, m) {
+  const d2 = dimOf(y, m);
+  let totalSec = 0;
+  for (let d = 1; d <= d2; d++) {
+    totalSec += getHabitDailySeconds(hId, dk(y, m, d), true);
+  }
+  return totalSec;
+}
+
+function formatDurationCompact(sec) {
+  if (!sec || sec <= 0) return '0m';
+  if (sec < 60) return `${sec}s`;
+  const m = Math.floor(sec / 60);
+  if (m < 60) return `${m}m`;
+  const h = Math.floor(m / 60);
+  const remM = m % 60;
+  return remM > 0 ? `${h}h ${remM}m` : `${h}h`;
+}
+
+function formatStopwatch(sec) {
+  const s = Math.max(0, Math.floor(sec || 0));
+  const hrs = Math.floor(s / 3600);
+  const mins = Math.floor((s % 3600) / 60);
+  const secs = s % 60;
+  return (hrs > 0 ? String(hrs).padStart(2, '0') + ':' : '') +
+         String(mins).padStart(2, '0') + ':' +
+         String(secs).padStart(2, '0');
+}
+
+function formatClockTime(timestamp) {
+  if (!timestamp) return '--:--';
+  const d = new Date(timestamp);
+  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
 /* ── Habit Check & Streak Logic ───────────────────────────── */
 function isChecked(hId, key) {
   return !!(state.completions[key] && state.completions[key].includes(hId));
+}
+
+function isHabitDone(hId, key) {
+  if (isChecked(hId, key)) return true;
+  const h = state.habits.find(x => x.id === hId);
+  if (h && h.type === 'time') {
+    const sec = getHabitDailySeconds(hId, key, true);
+    const targetSec = (h.targetMinutes || 30) * 60;
+    // Done if goal met OR if at least one session logged
+    return (sec >= targetSec) || (state.sessions[key]?.[hId]?.length > 0);
+  }
+  return false;
 }
 
 function toggle(hId, key) {
@@ -152,10 +254,10 @@ function streak(hId) {
   const today = new Date();
   let d = new Date(today);
   let s = 0;
-  if (!isChecked(hId, todayDk())) d.setDate(d.getDate() - 1);
+  if (!isHabitDone(hId, todayDk())) d.setDate(d.getDate() - 1);
   for (let i = 0; i < 365; i++) {
     const k = dk(d.getFullYear(), d.getMonth(), d.getDate());
-    if (isChecked(hId, k)) {
+    if (isHabitDone(hId, k)) {
       s++;
       d.setDate(d.getDate() - 1);
     } else {
@@ -163,6 +265,102 @@ function streak(hId) {
     }
   }
   return s;
+}
+
+/* ── Live Timer Engine ────────────────────────────────────── */
+function startTimer(hId) {
+  const targetKey = todayDk();
+  // Enforce single active timer: automatically stop previous timer if running
+  if (state.activeTimer) {
+    if (state.activeTimer.habitId === hId) return; // Already running
+    stopTimer(state.activeTimer.habitId);
+  }
+
+  state.activeTimer = {
+    habitId: hId,
+    startTime: Date.now(),
+    dateKey: targetKey
+  };
+  save();
+  ensureTimerTicker();
+  renderToday();
+}
+
+function stopTimer(hId) {
+  if (!state.activeTimer || state.activeTimer.habitId !== hId) return;
+
+  const targetKey = state.activeTimer.dateKey || todayDk();
+  const elapsed = Math.max(1, Math.floor((Date.now() - state.activeTimer.startTime) / 1000));
+
+  if (!state.sessions[targetKey]) state.sessions[targetKey] = {};
+  if (!state.sessions[targetKey][hId]) state.sessions[targetKey][hId] = [];
+
+  const sessionObj = {
+    id: 's_' + Date.now() + '_' + Math.random().toString(36).slice(2, 5),
+    start: state.activeTimer.startTime,
+    end: Date.now(),
+    duration: elapsed
+  };
+  state.sessions[targetKey][hId].push(sessionObj);
+
+  // If daily time goal is now reached, ensure it is marked completed
+  const habit = state.habits.find(x => x.id === hId);
+  if (habit) {
+    const totalSec = getHabitDailySeconds(hId, targetKey, false);
+    const targetSec = (habit.targetMinutes || 30) * 60;
+    if (totalSec >= targetSec && !isChecked(hId, targetKey)) {
+      toggle(hId, targetKey);
+    }
+  }
+
+  state.activeTimer = null;
+  save();
+  renderToday();
+  if (document.getElementById('view-grid')?.classList.contains('active')) renderGrid();
+  if (document.getElementById('view-analytics')?.classList.contains('active')) renderAnalytics();
+}
+
+function toggleTimer(hId) {
+  if (state.activeTimer && state.activeTimer.habitId === hId) {
+    stopTimer(hId);
+  } else {
+    startTimer(hId);
+  }
+}
+
+function ensureTimerTicker() {
+  if (timerTickerInterval) return;
+  timerTickerInterval = setInterval(() => {
+    if (!state.activeTimer) {
+      clearInterval(timerTickerInterval);
+      timerTickerInterval = null;
+      return;
+    }
+    updateLiveTimerDOM();
+  }, 1000);
+}
+
+function updateLiveTimerDOM() {
+  if (!state.activeTimer) return;
+  const hId = state.activeTimer.habitId;
+  const targetKey = state.activeTimer.dateKey || todayDk();
+  const elapsedThisSession = Math.max(0, Math.floor((Date.now() - state.activeTimer.startTime) / 1000));
+
+  const chipEl = document.getElementById(`live-timer-${hId}`);
+  if (chipEl) {
+    const digitsEl = chipEl.querySelector('.timer-digits');
+    if (digitsEl) digitsEl.textContent = formatStopwatch(elapsedThisSession);
+  }
+
+  const badgeEl = document.getElementById(`time-badge-${hId}`);
+  const habit = state.habits.find(x => x.id === hId);
+  if (badgeEl && habit) {
+    const totalSec = getHabitDailySeconds(hId, targetKey, true);
+    const goalMin = habit.targetMinutes || 30;
+    const goalMet = totalSec >= (goalMin * 60);
+    badgeEl.innerHTML = `⏱️ ${formatDurationCompact(totalSec)} / ${goalMin}m`;
+    badgeEl.classList.toggle('goal-met', goalMet);
+  }
 }
 
 /* ── Navigation ───────────────────────────────────────────── */
@@ -193,7 +391,7 @@ function renderToday() {
   }
 
   const key = todayDk();
-  const done = state.habits.filter(h => isChecked(h.id, key)).length;
+  const done = state.habits.filter(h => isHabitDone(h.id, key)).length;
   const total = state.habits.length;
   const pct = total ? Math.round((done / total) * 100) : 0;
 
@@ -231,21 +429,90 @@ function renderToday() {
   }
 
   el.innerHTML = state.habits.map(h => {
+    const isTimeMode = (h.type === 'time');
     const checked = isChecked(h.id, key);
+    const isDone = isHabitDone(h.id, key);
     const s = streak(h.id);
     const sBadge = s === 0 ? '— 0d' : `🔥 ${s}d`;
-    return `
-      <div class="habit-row ${checked ? 'done' : ''}" onclick="toggleToday('${h.id}')" role="button" tabindex="0" aria-label="Toggle ${esc(h.name)}">
-        <span class="h-icon">${h.icon}</span>
-        <span class="h-name">${esc(h.name)}</span>
-        <span class="streak-badge ${s === 0 ? 'zero' : ''}">${sBadge}</span>
-        <div class="h-check" aria-hidden="true">
-          <svg width="11" height="9" viewBox="0 0 11 9" fill="none">
-            <path d="M1 4.5 4 7.5 10 1" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
-          </svg>
-        </div>
-      </div>`;
+    const isRunning = (state.activeTimer && state.activeTimer.habitId === h.id);
+
+    if (isTimeMode) {
+      const totalSec = getHabitDailySeconds(h.id, key, true);
+      const goalMin = h.targetMinutes || 30;
+      const goalMet = totalSec >= (goalMin * 60);
+      const sessionsList = (state.sessions[key] && state.sessions[key][h.id]) || [];
+      const sessionCount = sessionsList.length;
+      const elapsedNow = isRunning ? Math.max(0, Math.floor((Date.now() - state.activeTimer.startTime) / 1000)) : 0;
+
+      return `
+        <div class="habit-row time-mode ${isDone ? 'done' : ''} ${isRunning ? 'timer-active' : ''}" id="hrow-${h.id}">
+          <span class="h-icon">${h.icon}</span>
+          <div class="h-info">
+            <div class="h-top-line">
+              <span class="h-name">${esc(h.name)}</span>
+              <span class="streak-badge ${s === 0 ? 'zero' : ''}">${sBadge}</span>
+            </div>
+            <div class="h-badges">
+              <span class="time-goal-badge ${goalMet ? 'goal-met' : ''}" id="time-badge-${h.id}">
+                ⏱️ ${formatDurationCompact(totalSec)} / ${goalMin}m
+              </span>
+              <button type="button" class="sessions-pill" onclick="openSessionsModal('${h.id}','${key}')" title="View logged sessions">
+                ${sessionCount} session${sessionCount === 1 ? '' : 's'}
+              </button>
+            </div>
+          </div>
+
+          <div class="h-controls" onclick="event.stopPropagation()">
+            <!-- Live Ticking Stopwatch Chip -->
+            <div class="live-timer-chip ${isRunning ? 'active' : ''}" id="live-timer-${h.id}">
+              <span class="timer-pulse-dot"></span>
+              <span class="timer-digits">${formatStopwatch(elapsedNow)}</span>
+            </div>
+
+            <!-- ▶ / ⏸ Play / Pause Toggle Button -->
+            <button type="button" class="player-btn ${isRunning ? 'player-btn-pause' : 'player-btn-play'}" onclick="toggleTimer('${h.id}')" title="${isRunning ? 'Pause Timer' : 'Start Timer'}" aria-label="${isRunning ? 'Pause' : 'Start'} ${esc(h.name)}">
+              ${isRunning ? '⏸' : '▶'}
+            </button>
+
+            <!-- ⏹ Stop Button (Active when timer is running) -->
+            ${isRunning ? `
+              <button type="button" class="player-btn player-btn-stop" onclick="stopTimer('${h.id}')" title="Stop & Save Session" aria-label="Stop timer">
+                ⏹
+              </button>
+            ` : ''}
+
+            <!-- 🕒 Sessions History & Manual Log Button -->
+            <button type="button" class="player-btn player-btn-history" onclick="openSessionsModal('${h.id}','${key}')" title="Session History & Log" aria-label="History">
+              🕒
+            </button>
+
+            <!-- ✓ Instant Complete / Goal Toggle Button -->
+            <button type="button" class="player-btn player-btn-complete ${checked ? 'checked' : ''}" onclick="toggleToday('${h.id}')" title="${checked ? 'Marked complete' : 'Mark complete for today'}" aria-label="Complete check">
+              ✓
+            </button>
+          </div>
+        </div>`;
+    } else {
+      // Simple Check Habit Row
+      return `
+        <div class="habit-row ${checked ? 'done' : ''}" onclick="toggleToday('${h.id}')" role="button" tabindex="0" aria-label="Toggle ${esc(h.name)}">
+          <span class="h-icon">${h.icon}</span>
+          <div class="h-info">
+            <div class="h-top-line">
+              <span class="h-name">${esc(h.name)}</span>
+              <span class="streak-badge ${s === 0 ? 'zero' : ''}">${sBadge}</span>
+            </div>
+          </div>
+          <div class="h-check ${checked ? 'checked' : ''}" aria-hidden="true">
+            <svg width="11" height="9" viewBox="0 0 11 9" fill="none">
+              <path d="M1 4.5 4 7.5 10 1" stroke="#000" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+        </div>`;
+    }
   }).join('');
+
+  if (state.activeTimer) ensureTimerTicker();
 }
 
 function toggleToday(hId) {
@@ -256,7 +523,7 @@ function toggleToday(hId) {
 }
 
 /* ════════════════════════════════════════════════════════════
-   MONTHLY GRID VIEW
+   MONTHLY GRID VIEW (LEDGER WITH TIME BADGES)
 ═══════════════════════════════════════════════════════════ */
 function shiftMonth(d) {
   state.gMonth += d;
@@ -280,26 +547,60 @@ function renderGrid() {
     const isTd = isCur && (now.getDate() === d);
     html += `<th class="${isTd ? 'tcol' : ''}">${d}</th>`;
   }
-  html += '</tr></thead><tbody>';
+  html += '<th class="r" style="padding-right:14px">Total</th></tr></thead><tbody>';
 
   if (!state.habits.length) {
-    html += `<tr><td colspan="${d2 + 1}" class="empty-list" style="padding: 40px;">No habits added yet. Go to Manage to add habits.</td></tr>`;
+    html += `<tr><td colspan="${d2 + 2}" class="empty-list" style="padding: 40px;">No habits added yet. Go to Manage to add habits.</td></tr>`;
   } else {
     state.habits.forEach(h => {
-      html += `<tr><td class="hcol">${h.icon} ${esc(h.name)}</td>`;
+      const isTime = (h.type === 'time');
+      const goalMin = h.targetMinutes || 30;
+      let monthTotalSec = 0;
+      let monthCheckCount = 0;
+
+      html += `<tr><td class="hcol">${h.icon} ${esc(h.name)} <span style="font-size:9px;color:var(--text-3)">(${isTime ? `${goalMin}m/d` : 'check'})</span></td>`;
+
       for (let d = 1; d <= d2; d++) {
         const key = dk(y, m, d);
         const future = isCur ? (d > now.getDate()) : (new Date(y, m, d) > now);
-        const checked = isChecked(h.id, key);
         const isTd = isCur && (now.getDate() === d);
 
         if (future) {
           html += `<td><div class="g-cell future" title="Future date">·</div></td>`;
+        } else if (isTime) {
+          const sec = getHabitDailySeconds(h.id, key, true);
+          const checked = isChecked(h.id, key);
+          const goalMet = sec >= (goalMin * 60) || checked;
+          if (sec > 0 || checked) monthCheckCount++;
+          monthTotalSec += sec;
+
+          let cellClass = 'g-cell';
+          if (isTd) cellClass += ' today-h';
+          if (sec > 0) cellClass += ' has-time';
+          if (goalMet && sec > 0) cellClass += ' goal-met';
+
+          const displayTxt = sec > 0 ? formatDurationCompact(sec) : (checked ? '✓' : '·');
+
+          html += `
+            <td>
+              <div class="${cellClass}" onclick="openSessionsModal('${h.id}','${key}')" role="button" aria-label="${h.name} on day ${d}: ${sec > 0 ? formatDurationCompact(sec) : 'No time logged'}">
+                <span class="g-cell-time">${displayTxt}</span>
+              </div>
+            </td>`;
         } else {
+          const checked = isChecked(h.id, key);
+          if (checked) monthCheckCount++;
           let cls = checked ? 'checked' : '';
           if (isTd) cls += ' today-h';
           html += `<td><div class="g-cell ${cls}" onclick="toggleGrid('${h.id}','${key}')" role="button" aria-label="${h.name} on day ${d}">${checked ? '✓' : ''}</div></td>`;
         }
+      }
+
+      // Total Column
+      if (isTime) {
+        html += `<td class="g-total-time" style="padding-right:14px">${formatDurationCompact(monthTotalSec)}</td>`;
+      } else {
+        html += `<td class="g-total-time" style="padding-right:14px">${monthCheckCount}d</td>`;
       }
       html += '</tr>';
     });
@@ -336,7 +637,7 @@ function renderTrend() {
       vals.push(null);
       continue;
     }
-    const done = state.habits.filter(h => isChecked(h.id, dk(y, m, d))).length;
+    const done = state.habits.filter(h => isHabitDone(h.id, dk(y, m, d))).length;
     vals.push(Math.round((done / state.habits.length) * 100));
   }
 
@@ -393,7 +694,7 @@ function renderTrend() {
 }
 
 /* ════════════════════════════════════════════════════════════
-   ANALYTICS VIEW (REAL DATA ONLY)
+   ANALYTICS VIEW (REAL DATA & TIME STATS)
 ═══════════════════════════════════════════════════════════ */
 function renderAnalytics() {
   const now = new Date();
@@ -407,35 +708,50 @@ function renderAnalytics() {
     periodEl.innerHTML = `${MONTHS[m].toUpperCase()} ${y}<br>Day ${elapsed} of ${d2}`;
   }
 
+  let totalMonthSec = 0;
   const stats = state.habits.map(h => {
-    let actual = 0;
+    let actualDays = 0;
+    let habitMonthSec = 0;
+
     for (let d = 1; d <= elapsed; d++) {
-      if (isChecked(h.id, dk(y, m, d))) actual++;
+      const key = dk(y, m, d);
+      if (isHabitDone(h.id, key)) actualDays++;
+      habitMonthSec += getHabitDailySeconds(h.id, key, true);
     }
-    const pct = elapsed > 0 ? Math.round((actual / elapsed) * 100) : 0;
+    totalMonthSec += habitMonthSec;
+
+    const pct = elapsed > 0 ? Math.round((actualDays / elapsed) * 100) : 0;
     return {
       id: h.id,
       name: h.name,
       icon: h.icon,
+      type: h.type || 'check',
+      targetMinutes: h.targetMinutes || 30,
       goal: d2,
-      actual: actual,
-      left: Math.max(0, d2 - actual),
-      pct: pct
+      actual: actualDays,
+      left: Math.max(0, d2 - actualDays),
+      pct: pct,
+      totalSeconds: habitMonthSec,
+      dailyAvgMinutes: elapsed > 0 ? Math.round(habitMonthSec / 60 / elapsed) : 0
     };
   });
 
   const tPoss = state.habits.length * elapsed;
   const tAct  = stats.reduce((s, h) => s + h.actual, 0);
   const ovPct = tPoss > 0 ? Math.round((tAct / tPoss) * 100) : 0;
-  const todayDone = state.habits.filter(h => isChecked(h.id, todayDk())).length;
+  const todayDone = state.habits.filter(h => isHabitDone(h.id, todayDk())).length;
   const bestS = state.habits.length > 0 ? Math.max(...state.habits.map(h => streak(h.id))) : 0;
+
+  const totalTrackedHoursDisplay = (totalMonthSec / 3600).toFixed(1) + ' hrs';
+  const dailyAvgAcrossAll = elapsed > 0 ? formatDurationCompact(Math.round(totalMonthSec / elapsed)) : '0m';
 
   const statCardsEl = document.getElementById('stat-cards');
   if (statCardsEl) {
     statCardsEl.innerHTML = `
       <div class="stat-card"><div class="stat-val a">${ovPct}%</div><div class="stat-lbl">Completion</div></div>
+      <div class="stat-card"><div class="stat-val">${totalTrackedHoursDisplay}</div><div class="stat-lbl">Time Tracked</div></div>
       <div class="stat-card"><div class="stat-val">${todayDone}</div><div class="stat-lbl">Done Today</div></div>
-      <div class="stat-card"><div class="stat-val">${bestS}</div><div class="stat-lbl">Best Streak</div></div>`;
+      <div class="stat-card"><div class="stat-val">${bestS}d</div><div class="stat-lbl">Best Streak</div></div>`;
   }
 
   const donutPctEl = document.getElementById('donut-pct');
@@ -471,7 +787,7 @@ function renderAnalytics() {
         charts.bar = new Chart(bCtx, {
           type: 'bar',
           data: {
-            labels: stats.map(h => `${h.icon} ${h.name.substring(0,14)}`),
+            labels: stats.map(h => `${h.icon} ${h.name.substring(0,12)}`),
             datasets: [{
               data: stats.map(h => h.pct),
               backgroundColor: stats.map(h =>
@@ -490,7 +806,14 @@ function renderAnalytics() {
                 backgroundColor: '#111',
                 borderColor: '#2a2a2a',
                 borderWidth: 1,
-                callbacks: { label: c => `${c.parsed.y}%` }
+                callbacks: {
+                  label: c => {
+                    const st = stats[c.dataIndex];
+                    return st.type === 'time'
+                      ? `${c.parsed.y}% (${formatDurationCompact(st.totalSeconds)} total)`
+                      : `${c.parsed.y}%`;
+                  }
+                }
               }
             },
             scales: {
@@ -516,15 +839,22 @@ function renderAnalytics() {
     if (!stats.length) {
       tbody.innerHTML = '<tr><td colspan="6" class="empty-list" style="border:none">No habits tracked yet. Start checking off habits to view insights.</td></tr>';
     } else {
-      tbody.innerHTML = stats.map(h => `
-        <tr>
-          <td><span style="margin-right:8px">${h.icon}</span>${esc(h.name)}</td>
-          <td class="r">${h.goal}</td>
-          <td class="r" style="color:var(--accent)">${h.actual}</td>
-          <td class="r">${h.left}</td>
-          <td><div class="pbar-wrap"><div class="pbar-fill" style="width:${h.pct}%"></div></div></td>
-          <td class="r" style="color:${h.pct >= 80 ? 'var(--accent)' : 'var(--text-2)'}">${h.pct}%</td>
-        </tr>`).join('');
+      tbody.innerHTML = stats.map(h => {
+        const typeBadge = h.type === 'time' ? `⏱️ ${h.targetMinutes}m/d` : '✓ Daily';
+        const actualTxt = h.type === 'time' ? `${formatDurationCompact(h.totalSeconds)} (${h.actual}d)` : `${h.actual}d`;
+        return `
+          <tr>
+            <td>
+              <span style="margin-right:8px">${h.icon}</span>${esc(h.name)}
+              <span style="font-size:9px;color:var(--text-3);margin-left:4px">(${typeBadge})</span>
+            </td>
+            <td class="r">${h.goal}d</td>
+            <td class="r" style="color:var(--accent)">${actualTxt}</td>
+            <td class="r">${h.left}</td>
+            <td><div class="pbar-wrap"><div class="pbar-fill" style="width:${h.pct}%"></div></div></td>
+            <td class="r" style="color:${h.pct >= 80 ? 'var(--accent)' : 'var(--text-2)'}">${h.pct}%</td>
+          </tr>`;
+      }).join('');
     }
   }
 
@@ -580,21 +910,21 @@ function openExportModal() {
               <div class="export-format-card ${selectedExportFormat === 'pdf' ? 'sel' : ''}" id="fmt-pdf-card" onclick="selectExportFormat('pdf')" role="button" tabindex="0">
                 <div class="fmt-icon">&#128196;</div>
                 <div class="fmt-name">PDF Document</div>
-                <div class="fmt-desc">Styled ledger with AI insights & charts</div>
+                <div class="fmt-desc">Styled ledger with time metrics & AI coaching</div>
               </div>
               <div class="export-format-card ${selectedExportFormat === 'xlsx' ? 'sel' : ''}" id="fmt-xlsx-card" onclick="selectExportFormat('xlsx')" role="button" tabindex="0">
                 <div class="fmt-icon">&#128202;</div>
                 <div class="fmt-name">Excel (.xlsx)</div>
-                <div class="fmt-desc">Dual sheets: Summary & 31-day Grid</div>
+                <div class="fmt-desc">Summary & daily duration grid</div>
               </div>
             </div>
           </div>
 
           <div class="export-features-box" style="margin-bottom:18px">
-            <div class="ef-item">&#10003; Full 31-Day Ledger Grid</div>
-            <div class="ef-item">&#10003; Per-Habit Completion %</div>
-            <div class="ef-item">&#10003; AI Consistency Insights</div>
-            <div class="ef-item">&#10003; Longest Streaks & Metrics</div>
+            <div class="ef-item">&#10003; Full 31-Day Ledger Grid with Time Badges</div>
+            <div class="ef-item">&#10003; Hours Tracked & Daily Average Analytics</div>
+            <div class="ef-item">&#10003; AI Consistency & Habit Coaching</div>
+            <div class="ef-item">&#10003; Longest Active Streaks & KPIs</div>
           </div>
 
           <div style="display:flex;gap:8px;justify-content:flex-end">
@@ -631,26 +961,38 @@ function generateAIInsights(y, m) {
       strugglingHabit: null,
       ovPct: 0,
       totalCompletions: 0,
+      totalSecondsTracked: 0,
       bestStreak: 0,
       stats: []
     };
   }
 
+  let totalMonthSec = 0;
   const stats = state.habits.map(h => {
-    let actual = 0;
+    let actualDays = 0;
+    let habitMonthSec = 0;
+
     for (let d = 1; d <= activeDays; d++) {
-      if (isChecked(h.id, dk(y, m, d))) actual++;
+      const key = dk(y, m, d);
+      if (isHabitDone(h.id, key)) actualDays++;
+      habitMonthSec += getHabitDailySeconds(h.id, key, true);
     }
-    const pct = activeDays > 0 ? Math.round((actual / activeDays) * 100) : 0;
+    totalMonthSec += habitMonthSec;
+
+    const pct = activeDays > 0 ? Math.round((actualDays / activeDays) * 100) : 0;
     return {
       id: h.id,
       name: h.name,
       icon: h.icon,
+      type: h.type || 'check',
+      targetMinutes: h.targetMinutes || 30,
       goal: d2,
-      actual: actual,
-      left: Math.max(0, d2 - actual),
+      actual: actualDays,
+      left: Math.max(0, d2 - actualDays),
       pct: pct,
-      streak: streak(h.id)
+      streak: streak(h.id),
+      totalSeconds: habitMonthSec,
+      dailyAvgMinutes: activeDays > 0 ? Math.round(habitMonthSec / 60 / activeDays) : 0
     };
   });
 
@@ -663,17 +1005,24 @@ function generateAIInsights(y, m) {
   const topHabit = sorted[0];
   const strugglingHabit = sorted[sorted.length - 1];
 
-  let commentary = `In ${MONTHS[m]} ${y}, you logged ${totalCompletions} habit checkmark${totalCompletions === 1 ? '' : 's'} across ${state.habits.length} tracked habit${state.habits.length === 1 ? '' : 's'}, reaching a ${ovPct}% overall consistency rate. `;
+  const totalHours = (totalMonthSec / 3600).toFixed(1);
+  let commentary = `In ${MONTHS[m]} ${y}, you logged ${totalCompletions} habit checkmark${totalCompletions === 1 ? '' : 's'}`;
+  if (totalMonthSec > 0) {
+    commentary += ` and tracked ${totalHours} total hours across ${state.habits.length} habit${state.habits.length === 1 ? '' : 's'}`;
+  }
+  commentary += `, reaching a ${ovPct}% overall consistency rate. `;
 
   if (topHabit && topHabit.pct >= 50) {
-    commentary += `You were most consistent with "${topHabit.name}" (${topHabit.pct}% completion). `;
-  } else if (topHabit) {
-    commentary += `Your leading habit was "${topHabit.name}" at ${topHabit.pct}% completion. `;
+    commentary += `You were most consistent with "${topHabit.name}" (${topHabit.pct}% completion`;
+    if (topHabit.type === 'time' && topHabit.totalSeconds > 0) {
+      commentary += `, averaging ${topHabit.dailyAvgMinutes} min/day`;
+    }
+    commentary += `). `;
   }
 
   if (strugglingHabit && strugglingHabit.id !== topHabit?.id && strugglingHabit.pct < 60) {
     commentary += `Consistency was lower for "${strugglingHabit.name}" (${strugglingHabit.pct}%). `;
-    commentary += `Suggestion: Consider habit-stacking "${strugglingHabit.name}" immediately after "${topHabit.name}" or anchoring it to a dedicated morning block in your Timetable to boost adherence.`;
+    commentary += `Suggestion: Anchor "${strugglingHabit.name}" to a dedicated block in your Timetable to boost daily adherence.`;
   } else if (ovPct >= 80) {
     commentary += `Outstanding momentum! Your discipline is in the top tier. Keep maintaining your routine triggers.`;
   } else {
@@ -686,6 +1035,7 @@ function generateAIInsights(y, m) {
     strugglingHabit,
     ovPct,
     totalCompletions,
+    totalSecondsTracked: totalMonthSec,
     bestStreak,
     stats
   };
@@ -739,35 +1089,37 @@ function generateExcelReport(y, m) {
     ['Exported On:', new Date().toLocaleString()],
     ['Overall Completion Rate:', `${insights.ovPct}%`],
     ['Total Checks Logged:', insights.totalCompletions],
+    ['Total Time Tracked:', formatDurationCompact(insights.totalSecondsTracked)],
     ['Longest Active Streak:', `${insights.bestStreak} days`],
     [],
     ['AI BEHAVIORAL INSIGHTS & SUGGESTIONS:'],
     [insights.summaryText],
     [],
     ['PER-HABIT PERFORMANCE BREAKDOWN'],
-    ['Icon', 'Habit Name', 'Monthly Goal (Days)', 'Actual Completed', 'Remaining Days', 'Completion Rate (%)', 'Current Streak (Days)']
+    ['Icon', 'Habit Name', 'Mode / Goal', 'Actual Completed', 'Total Time Spent', 'Daily Average', 'Completion Rate (%)', 'Current Streak (Days)']
   ];
 
   insights.stats.forEach(h => {
     summaryData.push([
       h.icon,
       h.name,
-      h.goal,
-      h.actual,
-      h.left,
+      h.type === 'time' ? `${h.targetMinutes} min/day` : 'Daily Check',
+      `${h.actual} of ${h.goal} days`,
+      h.type === 'time' ? formatDurationCompact(h.totalSeconds) : 'N/A',
+      h.type === 'time' ? `${h.dailyAvgMinutes}m/day` : 'N/A',
       `${h.pct}%`,
       `${h.streak}d`
     ]);
   });
 
   const wsSummary = XLSX.utils.aoa_to_sheet(summaryData);
-  wsSummary['!cols'] = [{ wch: 8 }, { wch: 28 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 20 }, { wch: 20 }];
+  wsSummary['!cols'] = [{ wch: 8 }, { wch: 28 }, { wch: 18 }, { wch: 18 }, { wch: 18 }, { wch: 16 }, { wch: 20 }, { wch: 20 }];
   XLSX.utils.book_append_sheet(wb, wsSummary, 'Monthly Summary');
 
   // SHEET 2: Daily Ledger Grid (1..31)
-  const gridHeaders = ['Icon', 'Habit'];
+  const gridHeaders = ['Icon', 'Habit', 'Type'];
   for (let d = 1; d <= d2; d++) gridHeaders.push(String(d));
-  gridHeaders.push('Total Done', 'Completion %');
+  gridHeaders.push('Total Done / Time', 'Completion %');
 
   const gridData = [
     [`DAILY LEDGER MATRIX — ${MONTHS[m].toUpperCase()} ${y}`],
@@ -776,27 +1128,37 @@ function generateExcelReport(y, m) {
   ];
 
   state.habits.forEach(h => {
+    const isTime = (h.type === 'time');
     let doneCount = 0;
-    const row = [h.icon, h.name];
+    let totalSec = 0;
+    const row = [h.icon, h.name, isTime ? 'Time-Tracked' : 'Simple Check'];
+
     for (let d = 1; d <= d2; d++) {
-      const checked = isChecked(h.id, dk(y, m, d));
-      if (checked) doneCount++;
-      row.push(checked ? '✓' : '·');
+      const key = dk(y, m, d);
+      if (isTime) {
+        const sec = getHabitDailySeconds(h.id, key, false);
+        totalSec += sec;
+        if (sec > 0 || isChecked(h.id, key)) doneCount++;
+        row.push(sec > 0 ? formatDurationCompact(sec) : (isChecked(h.id, key) ? '✓' : '·'));
+      } else {
+        const checked = isChecked(h.id, key);
+        if (checked) doneCount++;
+        row.push(checked ? '✓' : '·');
+      }
     }
     const pct = d2 > 0 ? Math.round((doneCount / d2) * 100) : 0;
-    row.push(doneCount, `${pct}%`);
+    row.push(isTime ? formatDurationCompact(totalSec) : `${doneCount}d`, `${pct}%`);
     gridData.push(row);
   });
 
   const wsGrid = XLSX.utils.aoa_to_sheet(gridData);
-  const colWidths = [{ wch: 6 }, { wch: 24 }];
-  for (let d = 1; d <= d2; d++) colWidths.push({ wch: 4 });
-  colWidths.push({ wch: 12 }, { wch: 14 });
+  const colWidths = [{ wch: 6 }, { wch: 24 }, { wch: 14 }];
+  for (let d = 1; d <= d2; d++) colWidths.push({ wch: 6 });
+  colWidths.push({ wch: 18 }, { wch: 14 });
   wsGrid['!cols'] = colWidths;
 
   XLSX.utils.book_append_sheet(wb, wsGrid, 'Daily Grid');
 
-  // Download File
   const filename = `Ledger-Report-${MONTHS[m]}-${y}.xlsx`;
   XLSX.writeFile(wb, filename);
 }
@@ -836,7 +1198,7 @@ function generatePdfReport(y, m) {
 
   doc.setFontSize(9);
   doc.setTextColor(45, 212, 191); // Teal accent
-  doc.text('DAILY HABIT LEDGER & PERFORMANCE REPORT', 18, curY + 19);
+  doc.text('DAILY HABIT LEDGER & TIME-TRACKING REPORT', 18, curY + 19);
 
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(11);
@@ -850,11 +1212,12 @@ function generatePdfReport(y, m) {
   curY += 32;
 
   // KPI Summary Cards
-  const cardW = (pageWidth - 24 - 12) / 3;
+  const cardW = (pageWidth - 24 - 18) / 4;
   const kpis = [
     { label: 'OVERALL COMPLETION', val: `${insights.ovPct}%`, color: [45, 212, 191] },
-    { label: 'TOTAL CHECKS LOGGED', val: `${insights.totalCompletions}`, color: [242, 242, 242] },
-    { label: 'BEST ACTIVE STREAK', val: `${insights.bestStreak} Days`, color: [242, 242, 242] }
+    { label: 'TIME TRACKED', val: formatDurationCompact(insights.totalSecondsTracked), color: [45, 212, 191] },
+    { label: 'CHECKS LOGGED', val: `${insights.totalCompletions}`, color: [242, 242, 242] },
+    { label: 'BEST ACTIVE STREAK', val: `${insights.bestStreak}d`, color: [242, 242, 242] }
   ];
 
   kpis.forEach((kpi, idx) => {
@@ -863,12 +1226,12 @@ function generatePdfReport(y, m) {
     doc.setDrawColor(38, 38, 38);
     doc.roundedRect(x, curY, cardW, 18, 1.5, 1.5, 'FD');
 
-    doc.setFontSize(14);
+    doc.setFontSize(13);
     doc.setFont('helvetica', 'bold');
     doc.setTextColor(kpi.color[0], kpi.color[1], kpi.color[2]);
     doc.text(kpi.val, x + cardW / 2, curY + 9, { align: 'center' });
 
-    doc.setFontSize(7);
+    doc.setFontSize(6.5);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(138, 138, 138);
     doc.text(kpi.label, x + cardW / 2, curY + 14.5, { align: 'center' });
@@ -897,9 +1260,9 @@ function generatePdfReport(y, m) {
   // Per-Habit Breakdown Table (AutoTable)
   const breakdownRows = insights.stats.map(h => [
     `${h.icon}  ${h.name}`,
-    String(h.goal),
-    String(h.actual),
-    String(h.left),
+    h.type === 'time' ? `Time (${h.targetMinutes}m/d)` : 'Check (Daily)',
+    h.type === 'time' ? formatDurationCompact(h.totalSeconds) : `${h.actual}d`,
+    h.type === 'time' ? `${h.dailyAvgMinutes}m` : 'N/A',
     `${h.pct}%`,
     `${h.streak}d`
   ]);
@@ -908,7 +1271,7 @@ function generatePdfReport(y, m) {
     doc.autoTable({
       startY: curY,
       margin: { left: 12, right: 12 },
-      head: [['Habit Name', 'Goal', 'Actual', 'Left', 'Completion %', 'Streak']],
+      head: [['Habit Name', 'Tracking Type', 'Total Time / Checks', 'Daily Avg', 'Completion %', 'Streak']],
       body: breakdownRows.length ? breakdownRows : [['No habits tracked', '-', '-', '-', '-', '-']],
       theme: 'plain',
       styles: {
@@ -926,7 +1289,7 @@ function generatePdfReport(y, m) {
         fontSize: 7.5
       },
       columnStyles: {
-        0: { cellWidth: 70 },
+        0: { cellWidth: 55 },
         1: { halign: 'center' },
         2: { halign: 'center', textColor: [45, 212, 191] },
         3: { halign: 'center' },
@@ -951,14 +1314,24 @@ function generatePdfReport(y, m) {
   gridHead.push('Total');
 
   const gridRows = state.habits.map(h => {
-    let tot = 0;
+    const isTime = (h.type === 'time');
+    let totSec = 0;
+    let totChecks = 0;
     const r = [`${h.icon} ${h.name}`];
     for (let d = 1; d <= Math.min(d2, 31); d++) {
-      const c = isChecked(h.id, dk(y, m, d));
-      if (c) tot++;
-      r.push(c ? 'v' : '-');
+      const key = dk(y, m, d);
+      if (isTime) {
+        const sec = getHabitDailySeconds(h.id, key, false);
+        totSec += sec;
+        if (sec > 0 || isChecked(h.id, key)) totChecks++;
+        r.push(sec > 0 ? formatDurationCompact(sec) : (isChecked(h.id, key) ? 'v' : '-'));
+      } else {
+        const c = isChecked(h.id, key);
+        if (c) totChecks++;
+        r.push(c ? 'v' : '-');
+      }
     }
-    r.push(String(tot));
+    r.push(isTime ? formatDurationCompact(totSec) : String(totChecks));
     return r;
   });
 
@@ -970,40 +1343,24 @@ function generatePdfReport(y, m) {
       body: gridRows.length ? gridRows : [['No habits', ...Array(d2).fill('-'), '0']],
       theme: 'plain',
       styles: {
-        fontSize: 5.5,
+        fontSize: 5,
         textColor: [200, 200, 200],
         fillColor: [17, 17, 17],
         lineColor: [30, 30, 30],
         lineWidth: 0.15,
-        cellPadding: 1,
+        cellPadding: 0.8,
         halign: 'center'
       },
       headStyles: {
         fillColor: [24, 24, 24],
         textColor: [45, 212, 191],
         fontStyle: 'bold',
-        fontSize: 5.5
+        fontSize: 5
       },
       columnStyles: {
-        0: { cellWidth: 32, halign: 'left', fontStyle: 'bold' }
+        0: { cellWidth: 30, halign: 'left', fontStyle: 'bold' }
       }
     });
-
-    curY = doc.lastAutoTable.finalY + 6;
-  }
-
-  // Embedded Chart Snapshot (if Donut Canvas exists)
-  const donutCanvas = document.getElementById('donut-chart');
-  if (donutCanvas && curY < 250) {
-    try {
-      const imgData = donutCanvas.toDataURL('image/png');
-      doc.addImage(imgData, 'PNG', pageWidth - 45, curY, 32, 32);
-      doc.setFontSize(7);
-      doc.setTextColor(138, 138, 138);
-      doc.text('Monthly Chart Snapshot', pageWidth - 45, curY + 36);
-    } catch(e) {
-      console.warn('Canvas export skipped:', e);
-    }
   }
 
   // Footer Note
@@ -1011,14 +1368,21 @@ function generatePdfReport(y, m) {
   doc.setTextColor(76, 76, 76);
   doc.text('HABITUS — Professional Monochrome Habit Tracker & Ledger • Self-Hosted & Local Storage', pageWidth / 2, 290, { align: 'center' });
 
-  // Download PDF
   const filename = `Ledger-Report-${MONTHS[m]}-${y}.pdf`;
   doc.save(filename);
 }
 
 /* ════════════════════════════════════════════════════════════
-   MANAGE HABITS VIEW & DATA BACKUP
+   MANAGE HABITS VIEW & EDIT MODAL
 ═══════════════════════════════════════════════════════════ */
+function setNewHabitType(type) {
+  newHabitType = type;
+  document.getElementById('type-btn-check')?.classList.toggle('active', type === 'check');
+  document.getElementById('type-btn-time')?.classList.toggle('active', type === 'time');
+  const goalCol = document.getElementById('goal-min-col');
+  if (goalCol) goalCol.style.display = (type === 'time') ? 'flex' : 'none';
+}
+
 function renderManage() {
   const emojiGrid = document.getElementById('emoji-grid');
   if (emojiGrid) {
@@ -1040,16 +1404,24 @@ function renderManage() {
   }
 
   el.className = 'manage-list';
-  el.innerHTML = state.habits.map((h, i) => `
-    <div class="m-row" id="mrow-${h.id}">
-      <div class="order-col">
-        <button type="button" class="ord-btn" onclick="moveHabit(${i},-1)" ${i === 0 ? 'disabled' : ''} aria-label="Move Up">&#9650;</button>
-        <button type="button" class="ord-btn" onclick="moveHabit(${i},1)" ${i === state.habits.length - 1 ? 'disabled' : ''} aria-label="Move Down">&#9660;</button>
-      </div>
-      <span style="font-size:20px">${h.icon}</span>
-      <span class="m-name">${esc(h.name)}</span>
-      <button type="button" class="btn btn-del" onclick="removeHabit('${h.id}')" aria-label="Delete ${esc(h.name)}">Remove</button>
-    </div>`).join('');
+  el.innerHTML = state.habits.map((h, i) => {
+    const isTime = (h.type === 'time');
+    const badgeTxt = isTime ? `⏱️ ${h.targetMinutes || 30}m/day` : '✓ Simple';
+    return `
+      <div class="m-row" id="mrow-${h.id}">
+        <div class="order-col">
+          <button type="button" class="ord-btn" onclick="moveHabit(${i},-1)" ${i === 0 ? 'disabled' : ''} aria-label="Move Up">&#9650;</button>
+          <button type="button" class="ord-btn" onclick="moveHabit(${i},1)" ${i === state.habits.length - 1 ? 'disabled' : ''} aria-label="Move Down">&#9660;</button>
+        </div>
+        <span style="font-size:20px">${h.icon}</span>
+        <div class="m-name">
+          <span>${esc(h.name)}</span>
+          <span class="m-type-badge ${isTime ? 'time' : ''}">${badgeTxt}</span>
+        </div>
+        <button type="button" class="btn-edit" onclick="openEditHabitModal('${h.id}')" aria-label="Edit ${esc(h.name)}">Edit</button>
+        <button type="button" class="btn btn-del" onclick="removeHabit('${h.id}')" aria-label="Delete ${esc(h.name)}">Remove</button>
+      </div>`;
+  }).join('');
 }
 
 function pickEmoji(e) {
@@ -1069,8 +1441,20 @@ function addHabit() {
     return;
   }
   inp.style.borderColor = '';
+
+  const goalInp = document.getElementById('h-goal-in');
+  const targetMin = (newHabitType === 'time') ? Math.max(1, parseInt(goalInp?.value || 30, 10)) : 30;
+
   const id = 'h_' + Date.now() + '_' + Math.random().toString(36).slice(2, 6);
-  state.habits.push({ id: id, name: name, icon: selectedEmoji, createdAt: new Date().toISOString() });
+  state.habits.push({
+    id: id,
+    name: name,
+    icon: selectedEmoji,
+    type: newHabitType,
+    targetMinutes: targetMin,
+    createdAt: new Date().toISOString()
+  });
+
   save();
   inp.value = '';
   renderManage();
@@ -1080,6 +1464,11 @@ function addHabit() {
 function removeHabit(id) {
   const h = state.habits.find(x => x.id === id);
   if (!h) return;
+  if (!confirm(`Delete habit "${h.name}" and its session history?`)) return;
+
+  if (state.activeTimer && state.activeTimer.habitId === id) {
+    state.activeTimer = null;
+  }
 
   state.habits = state.habits.filter(x => x.id !== id);
   state.ttBlocks.forEach(b => {
@@ -1089,6 +1478,8 @@ function removeHabit(id) {
   save();
   renderManage();
   renderToday();
+  if (document.getElementById('view-grid')?.classList.contains('active')) renderGrid();
+  if (document.getElementById('view-analytics')?.classList.contains('active')) renderAnalytics();
 }
 
 function moveHabit(idx, dir) {
@@ -1102,13 +1493,229 @@ function moveHabit(idx, dir) {
   renderToday();
 }
 
+/* ── Edit Habit Modal ─────────────────────────────────────── */
+function openEditHabitModal(hId) {
+  const h = state.habits.find(x => x.id === hId);
+  if (!h) return;
+  editingHabitId = hId;
+  editSelectedEmoji = h.icon;
+  editHabitType = h.type || 'check';
+
+  const root = document.getElementById('modal-root');
+  if (!root) return;
+
+  const emojiBtns = EMOJIS.map(e => `<button type="button" class="e-btn ${e === editSelectedEmoji ? 'sel' : ''}" onclick="pickEditEmoji('${e}')">${e}</button>`).join('');
+
+  root.innerHTML = `
+    <div class="modal-overlay" onclick="closeModal()"></div>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="edit-h-modal-title">
+      <div class="modal-card">
+        <div class="modal-hd">
+          <div class="modal-title" id="edit-h-modal-title">Edit Habit Settings</div>
+          <button type="button" class="modal-close" onclick="closeModal()" aria-label="Close modal">&#10005;</button>
+        </div>
+        <div class="form-col" style="margin-bottom:14px">
+          <label class="form-lbl" for="eh-name">Habit Name</label>
+          <input class="f-input" id="eh-name" value="${esc(h.name)}" maxlength="40" autocomplete="off" />
+        </div>
+        <div class="form-col" style="margin-bottom:14px">
+          <label class="form-lbl">Tracking Mode</label>
+          <div class="type-toggle-group">
+            <button type="button" class="type-btn ${editHabitType === 'check' ? 'active' : ''}" id="edit-type-check" onclick="setEditHabitType('check')">✓ Simple Check</button>
+            <button type="button" class="type-btn ${editHabitType === 'time' ? 'active' : ''}" id="edit-type-time" onclick="setEditHabitType('time')">⏱️ Time-Tracked</button>
+          </div>
+        </div>
+        <div class="form-col" id="edit-goal-col" style="margin-bottom:14px;${editHabitType === 'time' ? '' : 'display:none'}">
+          <label class="form-lbl" for="eh-goal">Daily Goal (Minutes)</label>
+          <input class="f-input" type="number" id="eh-goal" value="${h.targetMinutes || 30}" min="1" max="1440" />
+        </div>
+        <div class="form-col" style="margin-bottom:18px">
+          <label class="form-lbl">Icon</label>
+          <div class="emoji-grid" id="eh-emoji-grid" style="grid-template-columns:repeat(8,1fr);max-height:100px;overflow-y:auto">${emojiBtns}</div>
+        </div>
+        <div style="display:flex;gap:8px;justify-content:flex-end">
+          <button type="button" class="btn btn-ghost" onclick="closeModal()">Cancel</button>
+          <button type="button" class="btn btn-primary" onclick="saveHabitEdits()">Save Changes</button>
+        </div>
+      </div>
+    </div>`;
+
+  setTimeout(() => document.getElementById('eh-name')?.focus(), 60);
+}
+
+function setEditHabitType(type) {
+  editHabitType = type;
+  document.getElementById('edit-type-check')?.classList.toggle('active', type === 'check');
+  document.getElementById('edit-type-time')?.classList.toggle('active', type === 'time');
+  const goalCol = document.getElementById('edit-goal-col');
+  if (goalCol) goalCol.style.display = (type === 'time') ? 'flex' : 'none';
+}
+
+function pickEditEmoji(e) {
+  editSelectedEmoji = e;
+  document.querySelectorAll('#eh-emoji-grid .e-btn').forEach(b => {
+    b.classList.toggle('sel', b.textContent.trim() === e);
+  });
+}
+
+function saveHabitEdits() {
+  const h = state.habits.find(x => x.id === editingHabitId);
+  if (!h) return;
+
+  const nameInp = document.getElementById('eh-name');
+  const name = nameInp?.value.trim();
+  if (!name) {
+    nameInp?.focus();
+    return;
+  }
+
+  const goalInp = document.getElementById('eh-goal');
+  const targetMin = (editHabitType === 'time') ? Math.max(1, parseInt(goalInp?.value || 30, 10)) : 30;
+
+  h.name = name;
+  h.icon = editSelectedEmoji;
+  h.type = editHabitType;
+  h.targetMinutes = targetMin;
+
+  save();
+  closeModal();
+  renderManage();
+  renderToday();
+  if (document.getElementById('view-grid')?.classList.contains('active')) renderGrid();
+  if (document.getElementById('view-analytics')?.classList.contains('active')) renderAnalytics();
+}
+
+/* ════════════════════════════════════════════════════════════
+   SESSION HISTORY & MANUAL LOG MODAL
+═══════════════════════════════════════════════════════════ */
+function openSessionsModal(habitId, dateKey = todayDk()) {
+  const habit = state.habits.find(x => x.id === habitId);
+  if (!habit) return;
+
+  const root = document.getElementById('modal-root');
+  if (!root) return;
+
+  const sessions = (state.sessions[dateKey] && state.sessions[dateKey][habitId]) || [];
+  const isRunning = (state.activeTimer && state.activeTimer.habitId === habitId && state.activeTimer.dateKey === dateKey);
+  const totalSec = getHabitDailySeconds(habitId, dateKey, true);
+
+  let sessionsHtml = '';
+  if (isRunning) {
+    const elapsed = Math.max(0, Math.floor((Date.now() - state.activeTimer.startTime) / 1000));
+    sessionsHtml += `
+      <div class="session-item" style="border-color:var(--accent);background:rgba(45,212,191,0.08)">
+        <div>
+          <span style="color:var(--accent);font-weight:600">● LIVE RUNNING</span>
+          <div class="session-time-range" style="font-size:10px">Started: ${formatClockTime(state.activeTimer.startTime)}</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span class="session-dur">${formatStopwatch(elapsed)}</span>
+          <button type="button" class="btn btn-primary" style="font-size:10px;padding:4px 8px" onclick="stopTimer('${habitId}');openSessionsModal('${habitId}','${dateKey}')">Stop</button>
+        </div>
+      </div>`;
+  }
+
+  if (sessions.length) {
+    sessions.forEach((s, idx) => {
+      const timeRange = s.start && s.end ? `${formatClockTime(s.start)} – ${formatClockTime(s.end)}` : `Session #${idx + 1}`;
+      sessionsHtml += `
+        <div class="session-item">
+          <div>
+            <div class="session-time-range">${timeRange}</div>
+            <div style="font-size:9.5px;color:var(--text-3)">${formatDurationCompact(s.duration)}</div>
+          </div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="session-dur">${formatStopwatch(s.duration)}</span>
+            <button type="button" class="session-del-btn" onclick="deleteSession('${habitId}','${dateKey}','${s.id}')" title="Delete Session">✕</button>
+          </div>
+        </div>`;
+    });
+  } else if (!isRunning) {
+    sessionsHtml = '<div style="text-align:center;padding:18px 0;color:var(--text-3);font-family:var(--mono);font-size:11px">No sessions recorded for this date.</div>';
+  }
+
+  root.innerHTML = `
+    <div class="modal-overlay" onclick="closeModal()"></div>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="sessions-modal-title">
+      <div class="modal-card">
+        <div class="modal-hd">
+          <div>
+            <div class="modal-title" id="sessions-modal-title">${habit.icon} ${esc(habit.name)} — Sessions</div>
+            <div style="font-family:var(--mono);font-size:10px;color:var(--text-3);margin-top:2px">${dateKey} · Total: <strong style="color:var(--accent)">${formatDurationCompact(totalSec)}</strong></div>
+          </div>
+          <button type="button" class="modal-close" onclick="closeModal()" aria-label="Close modal">&#10005;</button>
+        </div>
+
+        <div class="sec-lbl" style="margin-top:4px">Logged Sessions (${sessions.length + (isRunning ? 1 : 0)})</div>
+        <div class="session-list">${sessionsHtml}</div>
+
+        <div class="sec-lbl" style="margin-top:16px">Add Manual Time Session</div>
+        <div style="display:grid;grid-template-columns:1fr auto;gap:8px;align-items:flex-end">
+          <div class="form-col">
+            <label class="form-lbl" for="manual-dur-min">Duration (Minutes)</label>
+            <input class="f-input" type="number" id="manual-dur-min" placeholder="e.g. 25" min="1" max="720" style="min-width:0;width:100%" />
+          </div>
+          <button type="button" class="btn btn-primary" onclick="addManualSession('${habitId}','${dateKey}')" style="height:36px;font-size:11.5px">+ Add Time</button>
+        </div>
+
+        <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:20px">
+          <button type="button" class="btn btn-ghost" onclick="closeModal()">Done</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function deleteSession(habitId, dateKey, sessionId) {
+  if (!state.sessions[dateKey] || !state.sessions[dateKey][habitId]) return;
+  state.sessions[dateKey][habitId] = state.sessions[dateKey][habitId].filter(s => s.id !== sessionId);
+  if (!state.sessions[dateKey][habitId].length) delete state.sessions[dateKey][habitId];
+  save();
+  renderToday();
+  if (document.getElementById('view-grid')?.classList.contains('active')) renderGrid();
+  if (document.getElementById('view-analytics')?.classList.contains('active')) renderAnalytics();
+  openSessionsModal(habitId, dateKey);
+}
+
+function addManualSession(habitId, dateKey) {
+  const inp = document.getElementById('manual-dur-min');
+  const min = parseInt(inp?.value || 0, 10);
+  if (!min || min <= 0) {
+    inp?.focus();
+    return;
+  }
+
+  const durationSec = min * 60;
+  const now = Date.now();
+  if (!state.sessions[dateKey]) state.sessions[dateKey] = {};
+  if (!state.sessions[dateKey][habitId]) state.sessions[dateKey][habitId] = [];
+
+  state.sessions[dateKey][habitId].push({
+    id: 's_' + Date.now() + '_' + Math.random().toString(36).slice(2, 5),
+    start: now - (durationSec * 1000),
+    end: now,
+    duration: durationSec
+  });
+
+  save();
+  renderToday();
+  if (document.getElementById('view-grid')?.classList.contains('active')) renderGrid();
+  if (document.getElementById('view-analytics')?.classList.contains('active')) renderAnalytics();
+  openSessionsModal(habitId, dateKey);
+}
+
+function closeModal() {
+  const root = document.getElementById('modal-root');
+  if (root) root.innerHTML = '';
+}
+
 /* ── Export & Import JSON Backup & Reset ───────────────────── */
 function exportData() {
   const backup = {
-    version: '1.0.0',
+    version: '2.0.0',
     exportedAt: new Date().toISOString(),
     habits: state.habits,
     completions: state.completions,
+    sessions: state.sessions,
     ttBlocks: state.ttBlocks,
     ttLog: state.ttLog
   };
@@ -1131,8 +1738,14 @@ function importData(event) {
     try {
       const data = JSON.parse(e.target.result);
       if (data && Array.isArray(data.habits)) {
-        state.habits = data.habits || [];
+        state.habits = (data.habits || []).map(h => ({
+          ...h,
+          type: h.type || 'check',
+          targetMinutes: parseInt(h.targetMinutes, 10) || 30
+        }));
         state.completions = data.completions || {};
+        state.sessions = data.sessions || {};
+        state.activeTimer = null;
         state.ttBlocks = data.ttBlocks || [];
         state.ttLog = data.ttLog || {};
         save();
@@ -1154,9 +1767,11 @@ function importData(event) {
 }
 
 function clearAllData() {
-  if (!confirm('Are you sure you want to reset all habits and schedule blocks to a clean state?')) return;
+  if (!confirm('Are you sure you want to reset all habits, sessions, and schedule blocks to a clean state?')) return;
   state.habits = [];
   state.completions = {};
+  state.sessions = {};
+  state.activeTimer = null;
   state.ttBlocks = [];
   state.ttLog = {};
   localStorage.clear();
@@ -1510,9 +2125,7 @@ function closeBlockModal() {
 }
 
 function closeAllModals() {
-  closeBlockModal();
-  closeExportModal();
-  closeIOSModal();
+  closeModal();
   const overlay = document.getElementById('modal-overlay');
   if (overlay) { overlay.style.display = 'none'; overlay.classList.remove('open'); }
 }
@@ -1610,7 +2223,6 @@ function isStandalone() {
 }
 
 function initPWA() {
-  // Register Service Worker
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').then(reg => {
       reg.update();
@@ -1619,13 +2231,11 @@ function initPWA() {
     });
   }
 
-  // If on mobile device and not yet standalone, show Install App button inside the Stats section
   if (isMobileDevice() && !isStandalone()) {
     const statsBtn = document.getElementById('stats-pwa-btn');
     if (statsBtn) statsBtn.style.display = 'flex';
   }
 
-  // Listen for beforeinstallprompt on Android/Chrome
   window.addEventListener('beforeinstallprompt', e => {
     e.preventDefault();
     deferredPwaPrompt = e;
@@ -1655,12 +2265,6 @@ function handlePWAInstallClick() {
   } else {
     alert('To install, tap your browser menu (⋮) and select "Install app" or "Add to Home screen".');
   }
-}
-
-function dismissPWABanner() {
-  const banner = document.getElementById('pwa-install-banner');
-  if (banner) banner.style.display = 'none';
-  sessionStorage.setItem('hbt_pwa_dismissed', 'true');
 }
 
 function openIOSModal() {
@@ -1701,6 +2305,11 @@ function init() {
   });
 
   renderToday();
+
+  // If timer was running from before, resume ticker immediately
+  if (state.activeTimer) {
+    ensureTimerTicker();
+  }
 }
 
 // Kick off when DOM is ready

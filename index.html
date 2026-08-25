@@ -260,7 +260,18 @@
         <div class="form-grid">
           <div class="form-col">
             <label class="form-lbl" for="h-name-in">Name</label>
-            <input class="f-input" id="h-name-in" placeholder="e.g. Morning run" maxlength="40" autocomplete="off" />
+            <input class="f-input" id="h-name-in" placeholder="e.g. Deep Work, Reading, Workout" maxlength="40" autocomplete="off" />
+          </div>
+          <div class="form-col">
+            <label class="form-lbl">Tracking Mode</label>
+            <div class="type-toggle-group" role="radiogroup">
+              <button type="button" class="type-btn active" id="type-btn-check" onclick="setNewHabitType('check')">✓ Simple Check</button>
+              <button type="button" class="type-btn" id="type-btn-time" onclick="setNewHabitType('time')">⏱️ Time-Tracked</button>
+            </div>
+          </div>
+          <div class="form-col" id="goal-min-col" style="display:none">
+            <label class="form-lbl" for="h-goal-in">Daily Goal (Minutes)</label>
+            <input class="f-input" type="number" id="h-goal-in" placeholder="30" min="1" max="1440" value="30" />
           </div>
           <div class="form-col">
             <label class="form-lbl">Icon</label>
