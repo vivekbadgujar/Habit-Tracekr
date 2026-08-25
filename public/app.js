@@ -1,5 +1,5 @@
 /* ════════════════════════════════════════════════════════════
-   HABITUS — Daily Habit Ledger & Schedule (Real Data)
+   HABITUS — Daily Habit Ledger & Schedule (Real Data Only)
 ═══════════════════════════════════════════════════════════ */
 
 const EMOJIS = [
@@ -29,10 +29,10 @@ const TT_SLOT  = 44;       // px per 30-min slot (Day view)
 const TT_TOTAL = (TT_END - TT_START) / 30 * TT_SLOT;
 
 let state = {
-  habits: [],           // Real user habits: [{ id, name, icon, createdAt }]
-  completions: {},      // Real completions: { 'YYYY-MM-DD': [habitId, ...] }
-  ttBlocks: [],         // Real timetable blocks: [{ id, title, icon, startTime, endTime, habitId, days, date }]
-  ttLog: {},            // Real timetable status log: { 'YYYY-MM-DD': { blockId: 'done' | 'skipped' } }
+  habits: [],           // [{ id, name, icon, createdAt }]
+  completions: {},      // { 'YYYY-MM-DD': [habitId, ...] } - REAL CLICKS ONLY
+  ttBlocks: [],         // [{ id, title, icon, startTime, endTime, habitId, days, date }]
+  ttLog: {},            // { 'YYYY-MM-DD': { blockId: 'done' | 'skipped' } }
   gMonth: new Date().getMonth(),
   gYear: new Date().getFullYear(),
   ttDate: new Date(),
@@ -45,24 +45,46 @@ let ttSelectedEmoji = '📅';
 let editingBlockId = null;
 let nowLineInterval = null;
 
-/* ── Persistence ─────────────────────────────────────────── */
+/* ── Persistence (Real Data Only) ────────────────────────── */
 function load() {
   try {
     state.habits      = JSON.parse(localStorage.getItem('hbt_habits')      || '[]');
     state.completions = JSON.parse(localStorage.getItem('hbt_completions') || '{}');
     state.ttBlocks    = JSON.parse(localStorage.getItem('hbt_tt_blocks')   || '[]');
     state.ttLog       = JSON.parse(localStorage.getItem('hbt_tt_log')      || '{}');
+
+    // Automatically purge any legacy dummy test IDs (e.g. h_d1, tb_d1) from older sessions
+    const dummyIds = ['h_d1', 'h_d2', 'h_d3', 'h_d4', 'h_d5'];
+    const hasDummyHabit = state.habits.some(h => dummyIds.includes(h.id));
+    if (hasDummyHabit) {
+      state.habits = state.habits.filter(h => !dummyIds.includes(h.id));
+      // Clean dummy IDs from completions
+      Object.keys(state.completions).forEach(k => {
+        state.completions[k] = state.completions[k].filter(id => !dummyIds.includes(id));
+        if (state.completions[k].length === 0) delete state.completions[k];
+      });
+      // Clean dummy timetable blocks
+      state.ttBlocks = state.ttBlocks.filter(b => !b.id.startsWith('tb_d'));
+      save();
+    }
   } catch(e) {
-    state.habits = []; state.completions = {}; state.ttBlocks = []; state.ttLog = {};
+    state.habits = [];
+    state.completions = {};
+    state.ttBlocks = [];
+    state.ttLog = {};
   }
 }
 
 function save() {
-  localStorage.setItem('hbt_habits',      JSON.stringify(state.habits));
-  localStorage.setItem('hbt_completions', JSON.stringify(state.completions));
-  localStorage.setItem('hbt_tt_blocks',   JSON.stringify(state.ttBlocks));
-  localStorage.setItem('hbt_tt_log',      JSON.stringify(state.ttLog));
-  localStorage.setItem('hbt_real_data',   'true');
+  try {
+    localStorage.setItem('hbt_habits',      JSON.stringify(state.habits));
+    localStorage.setItem('hbt_completions', JSON.stringify(state.completions));
+    localStorage.setItem('hbt_tt_blocks',   JSON.stringify(state.ttBlocks));
+    localStorage.setItem('hbt_tt_log',      JSON.stringify(state.ttLog));
+    localStorage.setItem('hbt_real_data',   'true');
+  } catch(e) {
+    console.error('Error saving to localStorage:', e);
+  }
 }
 
 /* ── Date & Time Helpers ──────────────────────────────────── */
@@ -112,18 +134,25 @@ function esc(s) {
     .replace(/"/g, '&quot;');
 }
 
-/* ── Habit Check & Streak Logic ───────────────────────────── */
+/* ── Real Habit Check & Streak Logic ──────────────────────── */
 function isChecked(hId, key) {
   return !!(state.completions[key] && state.completions[key].includes(hId));
 }
 
 function toggle(hId, key) {
-  if (!state.completions[key]) state.completions[key] = [];
+  if (!state.completions[key]) {
+    state.completions[key] = [];
+  }
   const i = state.completions[key].indexOf(hId);
   if (i === -1) {
+    // Real Click: Mark habit as done for this date
     state.completions[key].push(hId);
   } else {
+    // Real Click: Uncheck habit for this date
     state.completions[key].splice(i, 1);
+    if (state.completions[key].length === 0) {
+      delete state.completions[key];
+    }
   }
   save();
 }
@@ -132,7 +161,9 @@ function streak(hId) {
   const today = new Date();
   let d = new Date(today);
   let s = 0;
-  if (!isChecked(hId, todayDk())) d.setDate(d.getDate() - 1);
+  if (!isChecked(hId, todayDk())) {
+    d.setDate(d.getDate() - 1);
+  }
   for (let i = 0; i < 365; i++) {
     const k = dk(d.getFullYear(), d.getMonth(), d.getDate());
     if (isChecked(hId, k)) {
@@ -204,7 +235,7 @@ function renderToday() {
       <div class="empty-list" style="padding: 48px 24px; text-align: center;">
         <div style="font-size: 24px; margin-bottom: 8px;">◈</div>
         <div style="font-weight: 600; color: var(--text-1); font-size: 14px; margin-bottom: 4px;">No Habits Added Yet</div>
-        <div style="font-size: 11px; color: var(--text-3); margin-bottom: 16px;">Create your daily routine to start live tracking.</div>
+        <div style="font-size: 11px; color: var(--text-3); margin-bottom: 16px;">Add your habits in Manage tab to start tracking your real progress.</div>
         <button type="button" class="btn btn-primary" onclick="nav('manage')" style="font-size: 11px; padding: 7px 14px;">+ Add Your First Habit</button>
       </div>`;
     return;
@@ -231,9 +262,8 @@ function renderToday() {
 function toggleToday(hId) {
   toggle(hId, todayDk());
   renderToday();
-  if (document.getElementById('view-analytics')?.classList.contains('active')) {
-    renderAnalytics();
-  }
+  if (document.getElementById('view-analytics')?.classList.contains('active')) renderAnalytics();
+  if (document.getElementById('view-grid')?.classList.contains('active')) renderGrid();
 }
 
 /* ════════════════════════════════════════════════════════════
@@ -264,7 +294,7 @@ function renderGrid() {
   html += '</tr></thead><tbody>';
 
   if (!state.habits.length) {
-    html += `<tr><td colspan="${d2 + 1}" class="empty-list" style="padding: 40px;">No habits to display. Add habits in the Manage tab.</td></tr>`;
+    html += `<tr><td colspan="${d2 + 1}" class="empty-list" style="padding: 40px;">No habits added yet. Go to Manage to add habits.</td></tr>`;
   } else {
     state.habits.forEach(h => {
       html += `<tr><td class="hcol">${h.icon} ${esc(h.name)}</td>`;
@@ -275,11 +305,11 @@ function renderGrid() {
         const isTd = isCur && (now.getDate() === d);
 
         if (future) {
-          html += `<td><div class="g-cell future">·</div></td>`;
+          html += `<td><div class="g-cell future" title="Future date">·</div></td>`;
         } else {
           let cls = checked ? 'checked' : '';
           if (isTd) cls += ' today-h';
-          html += `<td><div class="g-cell ${cls}" onclick="toggleGrid('${h.id}','${key}')" role="button" aria-label="Day ${d}">${checked ? '✓' : ''}</div></td>`;
+          html += `<td><div class="g-cell ${cls}" onclick="toggleGrid('${h.id}','${key}')" role="button" aria-label="${h.name} on day ${d}">${checked ? '✓' : ''}</div></td>`;
         }
       }
       html += '</tr>';
@@ -296,9 +326,8 @@ function renderGrid() {
 function toggleGrid(hId, key) {
   toggle(hId, key);
   renderGrid();
-  if (document.getElementById('view-today')?.classList.contains('active')) {
-    renderToday();
-  }
+  if (document.getElementById('view-today')?.classList.contains('active')) renderToday();
+  if (document.getElementById('view-analytics')?.classList.contains('active')) renderAnalytics();
 }
 
 function renderTrend() {
@@ -375,7 +404,7 @@ function renderTrend() {
 }
 
 /* ════════════════════════════════════════════════════════════
-   ANALYTICS VIEW
+   ANALYTICS VIEW (REAL DATA ONLY)
 ═══════════════════════════════════════════════════════════ */
 function renderAnalytics() {
   const now = new Date();
@@ -496,7 +525,7 @@ function renderAnalytics() {
   const tbody = document.getElementById('an-tbody');
   if (tbody) {
     if (!stats.length) {
-      tbody.innerHTML = '<tr><td colspan="6" class="empty-list" style="border:none">No habits tracked yet. Start logging to view insights.</td></tr>';
+      tbody.innerHTML = '<tr><td colspan="6" class="empty-list" style="border:none">No habits tracked yet. Start checking off habits to view insights.</td></tr>';
     } else {
       tbody.innerHTML = stats.map(h => `
         <tr>
