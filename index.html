@@ -37,6 +37,20 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 
   <link rel="stylesheet" href="style.css?v=2.0" />
+
+  <script>
+    // Automatic SW and Cache purge to eliminate stale cached bundles
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.getRegistrations().then(function(regs) {
+        for (var r of regs) { r.unregister(); }
+      });
+    }
+    if ('caches' in window) {
+      caches.keys().then(function(keys) {
+        for (var k of keys) { caches.delete(k); }
+      });
+    }
+  </script>
 </head>
 <body>
 <div class="app">
@@ -70,7 +84,7 @@
     <div class="sidebar-foot">
       <div id="sb-date"></div>
       <div>Storage: LocalStorage</div>
-      <div>Status: Vercel Ready</div>
+      <div>Status: v2.0 Clean Scoped</div>
     </div>
   </aside>
 

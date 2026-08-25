@@ -3,7 +3,7 @@
   "version": "1.1.0",
   "description": "Professional monochrome habit tracker, daily timetable ledger, and monthly performance reports.",
   "scripts": {
-    "build": "node -e \"const fs=require('fs'); fs.mkdirSync('public', {recursive:true}); fs.mkdirSync('public/icons', {recursive:true}); ['index.html','style.css','app.js','manifest.json','sw.js'].forEach(f => { if (fs.existsSync(f)) fs.copyFileSync(f, 'public/'+f); }); if (fs.existsSync('icons/icon.svg')) fs.copyFileSync('icons/icon.svg', 'public/icons/icon.svg'); console.log('Build complete: PWA and public assets populated');\"",
+    "build": "node build.js",
     "start": "npx serve public"
   },
   "keywords": [
