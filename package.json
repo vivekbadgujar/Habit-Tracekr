@@ -1,11 +1,10 @@
-{
+﻿{
   "name": "habitus-habit-tracker",
   "version": "1.0.0",
   "description": "Professional monochrome habit tracker and daily timetable ledger.",
   "main": "index.html",
   "scripts": {
-    "start": "npx serve .",
-    "build": "echo 'Static build ready'"
+    "start": "npx serve ."
   },
   "keywords": [
     "habit-tracker",
