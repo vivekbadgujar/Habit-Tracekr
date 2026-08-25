@@ -2,20 +2,16 @@
   "name": "habitus-habit-tracker",
   "version": "1.0.0",
   "description": "Professional monochrome habit tracker and daily timetable ledger.",
-  "main": "index.html",
   "scripts": {
-    "start": "npx serve ."
+    "build": "node -e \"const fs=require('fs'); fs.mkdirSync('public', {recursive:true}); ['index.html','style.css','app.js'].forEach(f => fs.copyFileSync(f, 'public/'+f)); console.log('Build complete: public directory populated');\"",
+    "start": "npx serve public"
   },
   "keywords": [
     "habit-tracker",
     "timetable",
     "ledger",
-    "monochrome",
-    "dashboard"
+    "monochrome"
   ],
   "author": "Habitus Team",
-  "license": "MIT",
-  "devDependencies": {
-    "serve": "^14.2.4"
-  }
+  "license": "MIT"
 }
