@@ -1,9 +1,9 @@
-﻿{
+{
   "name": "habitus-habit-tracker",
   "version": "1.0.0",
   "description": "Professional monochrome habit tracker and daily timetable ledger.",
   "scripts": {
-    "build": "node -e \"const fs=require('fs'); fs.mkdirSync('public', {recursive:true}); ['index.html','style.css','app.js'].forEach(f => fs.copyFileSync(f, 'public/'+f)); console.log('Build complete: public directory populated');\"",
+    "build": "node -e \"const fs=require('fs'); fs.mkdirSync('public', {recursive:true}); ['index.html','style.css','app.js'].forEach(f => fs.copyFileSync(f, 'public/'+f)); console.log('Build complete');\"",
     "start": "npx serve public"
   },
   "keywords": [
