@@ -20,7 +20,7 @@
   <meta property="og:title" content="HABITUS — Daily Habit Ledger" />
   <meta property="og:description" content="Monochrome habit tracker and daily schedule with live metrics." />
   
-  <!-- Inline SVG Favicon -->
+  <!-- Favicon -->
   <link rel="icon" type="image/svg+xml" href="icons/icon.svg" />
 
   <!-- Fonts & Libraries -->
@@ -57,7 +57,7 @@
         <span class="nav-icon" aria-hidden="true">&#8862;</span> Monthly Grid
       </button>
       <button type="button" class="nav-item" data-view="analytics" onclick="nav('analytics')">
-        <span class="nav-icon" aria-hidden="true">&#9676;</span> Analytics
+        <span class="nav-icon" aria-hidden="true">&#9676;</span> Stats & Reports
       </button>
       <button type="button" class="nav-item" data-view="timetable" onclick="nav('timetable')">
         <span class="nav-icon" aria-hidden="true">&#9776;</span> Timetable
@@ -131,19 +131,14 @@
       </div>
     </section>
 
-    <!-- ─── ANALYTICS ─── -->
+    <!-- ─── STATS & ANALYTICS (REPORTS CONTAINED HERE) ─── -->
     <section class="view" id="view-analytics" aria-labelledby="analytics-title">
       <div class="page-hd">
         <div>
-          <h1 class="page-title" id="analytics-title">Analytics</h1>
-          <div class="page-sub">Performance & Month-to-Date Insights</div>
+          <h1 class="page-title" id="analytics-title">Stats & Reports</h1>
+          <div class="page-sub">Monthly Performance Ledger & Insights</div>
         </div>
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
-          <button type="button" class="btn btn-ghost" onclick="openExportModal()" style="display:flex;align-items:center;gap:6px;border-color:var(--accent-border);color:var(--text-1)" id="export-report-btn">
-            <span style="color:var(--accent)">&#128196;</span> Download Monthly Report
-          </button>
-          <div class="page-meta" id="an-period"></div>
-        </div>
+        <div class="page-meta" id="an-period"></div>
       </div>
       <div class="analytics-top">
         <div class="donut-card">
@@ -166,6 +161,7 @@
           </div>
         </div>
       </div>
+      
       <div class="sec-lbl">Habit Breakdown</div>
       <div class="table-card">
         <table class="a-table">
@@ -182,8 +178,26 @@
           <tbody id="an-tbody"></tbody>
         </table>
       </div>
+      
       <div class="sec-lbl" style="margin-top:4px">Top Habits — by completion rate</div>
       <div class="top-card" id="top-habits"></div>
+
+      <!-- ─── DEDICATED REPORT & APP DOWNLOAD SECTION (STATS ONLY) ─── -->
+      <div class="sec-lbl" style="margin-top:24px">Download Reports & Mobile App</div>
+      <div class="table-card" style="padding:16px 20px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px;background:var(--surface-2);border:1px solid var(--border);margin-bottom:24px">
+        <div>
+          <div style="font-weight:600;color:var(--text-1);font-size:13px;margin-bottom:2px">Monthly Performance Report</div>
+          <div style="font-size:11px;color:var(--text-3)">Export full 31-day ledger grid, per-habit stats, and AI consistency coaching as PDF or Excel.</div>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <button type="button" class="btn btn-primary" onclick="openExportModal()" style="display:flex;align-items:center;gap:6px;font-size:11px;padding:8px 16px" id="export-report-btn">
+            <span>&#128196;</span> Download Monthly Report
+          </button>
+          <button type="button" class="btn btn-ghost" id="stats-pwa-btn" onclick="handlePWAInstallClick()" style="display:none;align-items:center;gap:6px;font-size:11px;padding:8px 14px">
+            <span>&#128241;</span> Install App
+          </button>
+        </div>
+      </div>
     </section>
 
     <!-- ─── TIMETABLE ─── -->
@@ -357,7 +371,7 @@
       <div class="modal-card" style="max-width:360px">
         <div class="modal-hd">
           <div class="modal-title" id="ios-title">Install on iOS</div>
-          <button type="button" class="modal-close" onclick="closeIOSModal()" aria-label="Close modal">&#10005;</button>
+          <button type="button" class="modal-close" onclick="closeIOSModal()">&#10005;</button>
         </div>
         <div class="modal-body" style="font-size:12px;line-height:1.6;color:var(--text-2);padding:10px 0 6px">
           <div style="margin-bottom:12px;color:var(--text-1)">To install <strong>HABITUS</strong> as a standalone app on your iPhone / iPad:</div>
@@ -372,23 +386,6 @@
     </div>
 
   </main>
-</div>
-
-<!-- ══════════ MOBILE PWA INSTALL FLOATING BANNER ══════════ -->
-<div class="pwa-banner" id="pwa-install-banner" style="display:none">
-  <div class="pwa-banner-inner">
-    <div class="pwa-banner-icon">
-      <img src="icons/icon.svg" alt="HABITUS icon" width="26" height="26" />
-    </div>
-    <div class="pwa-banner-text">
-      <div class="pwa-banner-title">Install HABITUS App</div>
-      <div class="pwa-banner-sub">Add to home screen for full-screen mode</div>
-    </div>
-    <button type="button" class="btn btn-primary pwa-install-btn" id="pwa-install-btn" onclick="handlePWAInstallClick()">
-      Install
-    </button>
-    <button type="button" class="pwa-dismiss-btn" onclick="dismissPWABanner()" aria-label="Dismiss banner">&#10005;</button>
-  </div>
 </div>
 
 <!-- ══════════ MOBILE BOTTOM NAVIGATION ══════════ -->

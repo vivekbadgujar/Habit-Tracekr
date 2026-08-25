@@ -1558,33 +1558,24 @@ function initPWA() {
     });
   }
 
-  // If running on desktop or already installed as standalone app, don't show install banner
-  if (!isMobileDevice() || isStandalone() || sessionStorage.getItem('hbt_pwa_dismissed')) {
-    return;
+  // If on mobile device and not yet standalone, show Install App button inside the Stats section
+  if (isMobileDevice() && !isStandalone()) {
+    const statsBtn = document.getElementById('stats-pwa-btn');
+    if (statsBtn) statsBtn.style.display = 'flex';
   }
 
   // Listen for beforeinstallprompt on Android/Chrome
   window.addEventListener('beforeinstallprompt', e => {
     e.preventDefault();
     deferredPwaPrompt = e;
-    const banner = document.getElementById('pwa-install-banner');
-    if (banner && !sessionStorage.getItem('hbt_pwa_dismissed')) {
-      banner.style.display = 'block';
-    }
+    const statsBtn = document.getElementById('stats-pwa-btn');
+    if (statsBtn) statsBtn.style.display = 'flex';
   });
-
-  // For iOS Safari fallback: show banner if mobile iOS and not standalone
-  if (isIOS() && !isStandalone() && !sessionStorage.getItem('hbt_pwa_dismissed')) {
-    setTimeout(() => {
-      const banner = document.getElementById('pwa-install-banner');
-      if (banner) banner.style.display = 'block';
-    }, 1500);
-  }
 
   window.addEventListener('appinstalled', () => {
     deferredPwaPrompt = null;
-    const banner = document.getElementById('pwa-install-banner');
-    if (banner) banner.style.display = 'none';
+    const statsBtn = document.getElementById('stats-pwa-btn');
+    if (statsBtn) statsBtn.style.display = 'none';
   });
 }
 
