@@ -1612,7 +1612,9 @@ function isStandalone() {
 function initPWA() {
   // Register Service Worker
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(err => {
+    navigator.serviceWorker.register('sw.js').then(reg => {
+      reg.update();
+    }).catch(err => {
       console.warn('SW registration failed:', err);
     });
   }
